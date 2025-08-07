@@ -7,9 +7,9 @@ from datetime import datetime
 from django.utils import timezone
 from django.conf import settings
 from mpesa.models import Transaction, MpesaConfiguration
-from mpesa.services.mpesa_client import get_mpesa_client
-from core.exceptions import MPesaException, ValidationException, handle_mpesa_error
-from core.utils.phone import format_phone_for_mpesa, PhoneNumberError
+from mpesa.mpesa_client import get_mpesa_client
+from core.exceptions import MPesaException, ValidationException
+from core.utils.phone import normalize_phone_number, PhoneNumberError
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,27 +20,32 @@ class STKPushService:
     Service for handling STK Push (Lipa na M-Pesa Online) transactions.
     """
 
-    def __init__(self, environment='sandbox'):
+    def __init__(self, environment=None):
         """
         Initialize STK Push service.
 
         Args:
-            environment (str): 'sandbox' or 'live'
+            environment (str): 'sandbox' or 'live' (defaults to settings)
         """
-        self.environment = environment
-        self.client = get_mpesa_client(environment)
+        self.environment = environment or settings.MPESA_CONFIG.get('ENVIRONMENT', 'sandbox')
+        self.client = get_mpesa_client(self.environment)
         self.config = MpesaConfiguration.get_config()
 
-    def initiate_stk_push(self, client, phone_number, amount, description, reference=None, callback_url=None):
+    def initiate_stk_push(self, client, phone_number, amount, description,
+                         reference=None, account_reference=None,
+                         ip_address=None, user_agent=None, callback_url=None):
         """
         Initiate STK Push payment request.
 
         Args:
             client: Client instance making the request
             phone_number (str): Customer phone number
-            amount (float): Payment amount
+            amount (decimal.Decimal): Payment amount
             description (str): Payment description
             reference (str): Optional transaction reference
+            account_reference (str): Optional account reference shown to user
+            ip_address (str): Client IP address
+            user_agent (str): Client user agent
             callback_url (str): Optional custom callback URL
 
         Returns:
@@ -51,7 +56,11 @@ class STKPushService:
             self._validate_stk_push_inputs(phone_number, amount, description)
 
             # Format phone number
-            formatted_phone = format_phone_for_mpesa(phone_number)
+            formatted_phone = normalize_phone_number(phone_number)
+
+            # Generate reference if not provided
+            if not reference:
+                reference = f"TXN_{uuid.uuid4().hex[:8].upper()}"
 
             # Create transaction record
             transaction = Transaction.objects.create_stk_push_transaction(
@@ -62,38 +71,42 @@ class STKPushService:
                 reference=reference
             )
 
+            # Set additional fields
+            if ip_address:
+                transaction.ip_address = ip_address
+            if user_agent:
+                transaction.user_agent = user_agent
+            transaction.save(update_fields=['ip_address', 'user_agent'])
+
             # Prepare STK Push request
             stk_request = self._prepare_stk_push_request(
                 phone_number=formatted_phone,
                 amount=amount,
                 description=description,
-                reference=reference or str(transaction.transaction_id),
+                reference=account_reference or reference,
                 callback_url=callback_url
             )
 
             # Make API request
             response = self.client.make_request('/mpesa/stkpush/v1/processrequest', stk_request)
 
-            # Handle response
-            response = handle_mpesa_error(response, transaction)
-
             # Update transaction with response
             self._update_transaction_with_response(transaction, response)
 
             # Prepare response
             result = {
-                'transaction_id': str(transaction.transaction_id),
-                'mpesa_checkout_request_id': response.get('CheckoutRequestID'),
-                'mpesa_merchant_request_id': response.get('MerchantRequestID'),
+                'transaction_id': transaction.transaction_id,
+                'checkout_request_id': response.get('CheckoutRequestID'),
+                'merchant_request_id': response.get('MerchantRequestID'),
                 'response_code': response.get('ResponseCode'),
                 'response_description': response.get('ResponseDescription'),
                 'customer_message': response.get('CustomerMessage'),
                 'phone_number': formatted_phone,
                 'amount': float(amount),
                 'description': description,
-                'reference': reference or str(transaction.transaction_id),
-                'status': 'PENDING',
-                'created_at': transaction.created_at.isoformat()
+                'reference': reference,
+                'status': transaction.status,
+                'created_at': transaction.created_at
             }
 
             logger.info(f"STK Push initiated successfully: {transaction.transaction_id}")
@@ -101,7 +114,7 @@ class STKPushService:
 
         except PhoneNumberError as e:
             logger.error(f"Invalid phone number for STK Push: {e}")
-            raise ValidationException(f"Invalid phone number: {e}", field='phone_number')
+            raise ValidationException(f"Invalid phone number: {e}")
         except MPesaException:
             raise
         except Exception as e:
@@ -111,22 +124,22 @@ class STKPushService:
     def _validate_stk_push_inputs(self, phone_number, amount, description):
         """Validate STK Push inputs."""
         if not phone_number:
-            raise ValidationException("Phone number is required", field='phone_number')
+            raise ValidationException("Phone number is required")
 
         if not amount or amount <= 0:
-            raise ValidationException("Amount must be greater than 0", field='amount')
+            raise ValidationException("Amount must be greater than 0")
 
         if amount < 1:
-            raise ValidationException("Minimum amount is KES 1", field='amount')
+            raise ValidationException("Minimum amount is KES 1")
 
         if amount > 150000:  # MPesa limit
-            raise ValidationException("Maximum amount is KES 150,000", field='amount')
+            raise ValidationException("Maximum amount is KES 150,000")
 
         if not description:
-            raise ValidationException("Description is required", field='description')
+            raise ValidationException("Description is required")
 
         if len(description) > 255:
-            raise ValidationException("Description too long (max 255 characters)", field='description')
+            raise ValidationException("Description too long (max 255 characters)")
 
     def _prepare_stk_push_request(self, phone_number, amount, description, reference, callback_url=None):
         """Prepare STK Push request data."""
@@ -138,7 +151,9 @@ class STKPushService:
             callback_url = callback_url or self.config.stk_callback_url
 
             if not callback_url:
-                raise ValidationException("No callback URL configured")
+                callback_url = settings.MPESA_CONFIG.get('STK_CALLBACK_URL')
+                if not callback_url:
+                    raise ValidationException("No callback URL configured")
 
             # Prepare request data
             request_data = {
@@ -146,7 +161,7 @@ class STKPushService:
                 "Password": password,
                 "Timestamp": timestamp,
                 "TransactionType": "CustomerPayBillOnline",
-                "Amount": int(float(amount)),  # Convert to integer cents
+                "Amount": int(float(amount)),  # Convert to integer
                 "PartyA": phone_number,
                 "PartyB": self.client.get_business_shortcode(),
                 "PhoneNumber": phone_number,
@@ -272,7 +287,7 @@ class STKPushService:
         """Format transaction status for API response."""
         return {
             'transaction_id': str(transaction.transaction_id),
-            'mpesa_checkout_request_id': transaction.checkout_request_id,
+            'checkout_request_id': transaction.checkout_request_id,
             'mpesa_receipt_number': transaction.mpesa_receipt_number,
             'phone_number': transaction.phone_number,
             'amount': float(transaction.amount),
@@ -300,7 +315,7 @@ class STKPushService:
         try:
             transaction = Transaction.objects.get(transaction_id=transaction_id)
 
-            if transaction.status != 'PENDING':
+            if transaction.status not in ['PENDING', 'PROCESSING']:
                 raise ValidationException(f"Cannot cancel transaction with status: {transaction.status}")
 
             # Update status to cancelled
@@ -318,47 +333,55 @@ class STKPushService:
             logger.error(f"Error cancelling STK Push: {e}")
             raise MPesaException(f"Failed to cancel transaction: {e}")
 
-    def get_transaction_history(self, client, limit=50, offset=0, status=None):
+    def get_transaction_summary(self, client, date_from=None, date_to=None):
         """
-        Get transaction history for a client.
+        Get transaction summary for a client.
 
         Args:
             client: Client instance
-            limit (int): Number of transactions to return
-            offset (int): Offset for pagination
-            status (str): Filter by status
+            date_from (datetime): Start date filter
+            date_to (datetime): End date filter
 
         Returns:
-            dict: Transaction history
+            dict: Transaction summary
         """
         try:
             queryset = Transaction.objects.filter(
                 client=client,
                 transaction_type='STK_PUSH'
-            ).order_by('-created_at')
+            )
 
-            if status:
-                queryset = queryset.filter(status=status)
+            if date_from:
+                queryset = queryset.filter(created_at__gte=date_from)
+            if date_to:
+                queryset = queryset.filter(created_at__lte=date_to)
 
+            # Calculate summary statistics
             total_count = queryset.count()
-            transactions = queryset[offset:offset+limit]
+            successful_count = queryset.filter(status='SUCCESSFUL').count()
+            failed_count = queryset.filter(status='FAILED').count()
+            pending_count = queryset.filter(status__in=['PENDING', 'PROCESSING']).count()
 
-            transaction_list = [
-                self._format_transaction_status(transaction)
-                for transaction in transactions
-            ]
+            total_amount = sum(
+                float(t.amount) for t in queryset.filter(status='SUCCESSFUL')
+            )
 
             return {
-                'transactions': transaction_list,
-                'total_count': total_count,
-                'limit': limit,
-                'offset': offset,
-                'has_more': (offset + limit) < total_count
+                'total_transactions': total_count,
+                'successful_transactions': successful_count,
+                'failed_transactions': failed_count,
+                'pending_transactions': pending_count,
+                'total_amount': total_amount,
+                'success_rate': (successful_count / total_count * 100) if total_count > 0 else 0,
+                'period': {
+                    'from': date_from.isoformat() if date_from else None,
+                    'to': date_to.isoformat() if date_to else None
+                }
             }
 
         except Exception as e:
-            logger.error(f"Error getting transaction history: {e}")
-            raise MPesaException(f"Failed to get transaction history: {e}")
+            logger.error(f"Error getting transaction summary: {e}")
+            raise MPesaException(f"Failed to get transaction summary: {e}")
 
 
 # Service instance
