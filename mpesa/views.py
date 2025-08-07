@@ -1,3 +1,4 @@
-from django.shortcuts import render
+from django.http import HttpResponse
 
-# Create your views here.
+def mpesa_home(request):
+    return HttpResponse("Hello, this is a test!")
