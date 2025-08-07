@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from django.core.cache import cache
 from django.conf import settings
-from mpesa.models import MpesaCredentials, AccessToken
+# Import models lazily to avoid circular imports
+# from mpesa.models import MpesaCredentials, AccessToken
 from core.exceptions import MPesaException, ConfigurationException
 import logging
 
@@ -29,18 +30,35 @@ class MpesaClient:
             environment (str): 'sandbox' or 'live'
         """
         self.environment = environment
-        self.credentials = self._get_credentials()
-        self.base_url = self.credentials.base_url if self.credentials else None
+        self._credentials = None  # Lazy loading
         self.timeout = getattr(settings, 'MPESA_CONFIG', {}).get('api_timeout_seconds', 30)
 
-        if not self.credentials:
-            raise ConfigurationException(
-                f"No MPesa credentials found for environment: {environment}"
-            )
-
     def _get_credentials(self):
-        """Get MPesa credentials for the environment."""
-        return MpesaCredentials.objects.get_active_credentials(self.environment)
+        """Get MPesa credentials for the environment (lazy loading)."""
+        if self._credentials is None:
+            try:
+                from mpesa.models import MpesaCredentials
+                self._credentials = MpesaCredentials.objects.get_active_credentials(self.environment)
+                if not self._credentials:
+                    raise ConfigurationException(
+                        f"No MPesa credentials found for environment: {self.environment}"
+                    )
+            except Exception as e:
+                # Handle database not ready or other errors gracefully
+                logger.warning(f"Could not load MPesa credentials: {e}")
+                self._credentials = None
+        return self._credentials
+
+    @property
+    def credentials(self):
+        """Get credentials property with lazy loading."""
+        return self._get_credentials()
+
+    @property
+    def base_url(self):
+        """Get base URL from credentials."""
+        creds = self.credentials
+        return creds.base_url if creds else None
 
     def get_access_token(self):
         """
@@ -60,6 +78,7 @@ class MpesaClient:
 
             # Check database cache
             try:
+                from mpesa.models import AccessToken
                 token_obj = AccessToken.objects.get(environment=self.environment)
                 if not token_obj.is_expired():
                     token = token_obj.get_token()
@@ -112,6 +131,7 @@ class MpesaClient:
                 raise MPesaException("No access token in response")
 
             # Store in database
+            from mpesa.models import AccessToken
             token_obj, created = AccessToken.objects.get_or_create(
                 environment=self.environment,
                 defaults={'access_token': '', 'expires_at': timezone.now()}

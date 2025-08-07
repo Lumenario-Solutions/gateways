@@ -31,7 +31,7 @@ api_patterns = [
     path('payments/', include('mpesa.urls')),
 
     # Versioned API (alternative structure)
-    path('v1/clients/', include('clients.api.v1.urls')),
+    path('v1/clients/', include('clients.urls')),
     path('v1/mpesa/', include('mpesa.api.v1.urls')),
 ]
 

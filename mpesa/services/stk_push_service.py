@@ -384,5 +384,13 @@ class STKPushService:
             raise MPesaException(f"Failed to get transaction summary: {e}")
 
 
-# Service instance
-stk_push_service = STKPushService()
+# Service instance - use lazy initialization to avoid database access during import
+# stk_push_service = STKPushService()  # Removed to prevent database access during import
+
+def get_stk_push_service():
+    """Get STK Push service instance (lazy initialization)."""
+    global _stk_push_service
+    if '_stk_push_service' not in globals():
+        global _stk_push_service
+        _stk_push_service = STKPushService()
+    return _stk_push_service

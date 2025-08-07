@@ -623,5 +623,13 @@ class TransactionService:
             raise ValidationException("openpyxl library required for Excel export")
 
 
-# Service instance
-transaction_service = TransactionService()
+# Service instance - use lazy initialization to avoid database access during import
+# transaction_service = TransactionService()  # Removed to prevent database access during import
+
+def get_transaction_service():
+    """Get Transaction service instance (lazy initialization)."""
+    global _transaction_service
+    if '_transaction_service' not in globals():
+        global _transaction_service
+        _transaction_service = TransactionService()
+    return _transaction_service

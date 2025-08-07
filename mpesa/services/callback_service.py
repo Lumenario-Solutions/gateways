@@ -466,5 +466,13 @@ class CallbackService:
             raise MPesaException(f"Failed to get callback logs: {e}")
 
 
-# Service instance
-callback_service = CallbackService()
+# Service instance - use lazy initialization to avoid database access during import
+# callback_service = CallbackService()  # Removed to prevent database access during import
+
+def get_callback_service():
+    """Get Callback service instance (lazy initialization)."""
+    global _callback_service
+    if '_callback_service' not in globals():
+        global _callback_service
+        _callback_service = CallbackService()
+    return _callback_service

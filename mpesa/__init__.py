@@ -2,10 +2,8 @@
 MPesa services for payment processing and API integration.
 """
 
-from .mpesa_client import MpesaClient
-from .stk_push_service import STKPushService
-from .transaction_service import TransactionService
-from .callback_service import CallbackService
+# Remove the problematic imports that cause circular imports
+# These will be imported lazily when needed
 
 __all__ = [
     'MpesaClient',
