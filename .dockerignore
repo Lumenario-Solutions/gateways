@@ -1,0 +1,39 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+env/
+.venv/
+ENV/
+
+# Git & Docker
+.git
+.gitignore
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Testing & coverage
+*.log
+coverage/
+htmlcov/
+.coverage
+
+# Env files
+.env
+.env.*
+
+# Django specific
+*.sqlite3
+db.sqlite3
+media/
+staticfiles/
