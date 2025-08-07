@@ -79,7 +79,7 @@ WSGI_APPLICATION = 'lmn_payment_gateways.wsgi.application'
 # Database Configuration
 DATABASES = {
     'default': dj_database_url.config(
-        default=config('DATABASE_URL', default='sqlite:///db.sqlite3')
+        default=config('DATABASE_URL', default='mysql://admin:Keter7680!@lmn.co9coooqesyu.us-east-1.rds.amazonaws.com/payment_gateway_db')
     )
 }
 
