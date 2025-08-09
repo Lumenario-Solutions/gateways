@@ -591,9 +591,9 @@ class MpesaConfiguration(models.Model):
         config, created = cls.objects.get_or_create(
             id=1,
             defaults={
-                'stk_callback_url': 'https://yourdomain.com/api/v1/mpesa/callback/',
-                'validation_url': 'https://yourdomain.com/api/v1/mpesa/validate/',
-                'confirmation_url': 'https://yourdomain.com/api/v1/mpesa/confirm/',
+                'stk_callback_url': 'https://lumenario.pythonanywhere.com/api/v1/mpesa/callback/',
+                'validation_url': 'https://lumenario.pythonanywhere.com/api/v1/mpesa/validate/',
+                'confirmation_url': 'https://lumenario.pythonanywhere.com/api/v1/mpesa/confirm/',
             }
         )
         return config

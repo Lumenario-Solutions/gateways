@@ -13,9 +13,9 @@ import dj_database_url
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Security Settings
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-dev-key-change-in-production')
-DEBUG = config('DEBUG', default=False, cast=bool)
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+SECRET_KEY = config('SECRET_KEY', default='Af31Id8bbNnM8RlZwRQPmJ2185KHf2dF')
+DEBUG = config('DEBUG', default=True, cast=bool)
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,lumenario.pythonanywhere.com,lmn.co.ke,lumenario.pythonanywhere.com,local.lmn.co.ke').split(',')
 
 # Application definition
 DJANGO_APPS = [
@@ -79,7 +79,7 @@ WSGI_APPLICATION = 'lmn_payment_gateways.wsgi.application'
 # Database Configuration
 DATABASES = {
     'default': dj_database_url.config(
-        default=config('DATABASE_URL', default='mysql://admin:Keter7680!@lmn.co9coooqesyu.us-east-1.rds.amazonaws.com/payment_gateway_db')
+        default=config('DATABASE_URL', default='mysql://lumenario:Keter7680@lumenario.mysql.pythonanywhere-services.com/lumenario$default')
     )
 }
 
@@ -87,7 +87,7 @@ DATABASES = {
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': config('REDIS_URL', default='redis://127.0.0.1:6379/1'),
+        'LOCATION': config('REDIS_URL', default='redis://default:wNiZ5CaF3d282dcie32bicHwnpcRsJGU@redis-17938.c257.us-east-1-3.ec2.redns.redis-cloud.com:17938'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         }
@@ -176,21 +176,21 @@ if not DEBUG:
 # MPesa Configuration
 MPESA_CONFIG = {
     'ENVIRONMENT': config('MPESA_ENVIRONMENT', default='sandbox'),
-    'CONSUMER_KEY': config('MPESA_CONSUMER_KEY', default=''),
-    'CONSUMER_SECRET': config('MPESA_CONSUMER_SECRET', default=''),
+    'CONSUMER_KEY': config('MPESA_CONSUMER_KEY', default='7ejseeAP94J8QzZGDEM7DBzMXY5eZ8PZpanHnDfT8zc6SwwS'),
+    'CONSUMER_SECRET': config('MPESA_CONSUMER_SECRET', default='AD8UduGn4yTfEoJZqNevPoZlCUJhVWR41B4pngcRuMXVhNNYOhS93qmHAYFlGIT1'),
     'SHORTCODE': config('MPESA_SHORTCODE', default='174379'),
-    'PASSKEY': config('MPESA_PASSKEY', default=''),
-    'INITIATOR_NAME': config('MPESA_INITIATOR_NAME', default='testapi'),
-    'SECURITY_CREDENTIAL': config('MPESA_SECURITY_CREDENTIAL', default=''),
-    'STK_CALLBACK_URL': config('MPESA_STK_CALLBACK_URL', default=''),
-    'VALIDATION_URL': config('MPESA_VALIDATION_URL', default=''),
-    'CONFIRMATION_URL': config('MPESA_CONFIRMATION_URL', default=''),
+    'PASSKEY': config('MPESA_PASSKEY', default='bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919'),
+    'INITIATOR_NAME': config('MPESA_INITIATOR_NAME', default='lumenario'),
+    'SECURITY_CREDENTIAL': config('MPESA_SECURITY_CREDENTIAL', default='llrG2cOeCF9DCmWYEc/kFIUcFRk429UFdFKK/h7aNs/FxSoWlLTSDG9MgmeAbK5bUEm4STzf2SFK8Qire3Yprcd+9gW2F0YmcEVj//GR79jK0sK9znLxZVmiUh7BX59dgrzBn7m+mOlkboZPI6/FFQ1Cqkslf+O2nQYjLnGOOmUfUgFBlYIe6dFG/vxiYUAsA9eH0LcObwZUBSW1A141NFrtmhkc/XVPWXR2MWAUUKXqhCTCJNz1wY9gcJ6/ZEhTdC8/pQu7Lk7dpnPfQUkUU89CoQuH4cc8xFBw/mVoOwSqh5zIRJWX6uwwp2nUNy2BwT1yhqevxJSPRs2v/IaLWQ=='),
+    'STK_CALLBACK_URL': config('MPESA_STK_CALLBACK_URL', default='https://lumenario.pythonanywhere.com/api/v1/mpesa/callback/'),
+    'VALIDATION_URL': config('MPESA_VALIDATION_URL', default='https://lumenario.pythonanywhere.com/api/v1/mpesa/validate/'),
+    'CONFIRMATION_URL': config('MPESA_CONFIRMATION_URL', default='https://lumenario.pythonanywhere.com/api/v1/mpesa/confirm/'),
 }
 
 # Encryption Configuration
 ENCRYPTION_CONFIG = {
-    'ENCRYPTION_KEY': config('ENCRYPTION_KEY', default=''),
-    'FERNET_KEY': config('FERNET_KEY', default=''),
+    'ENCRYPTION_KEY': config('ENCRYPTION_KEY', default='008eIvvBXUAGAywWr0_BzECT5uabladL'),
+    'FERNET_KEY': config('FERNET_KEY', default='odp2bd1FTimkq56Rz-yG4arCFADlHq8aT1AnPNdMf4I='),
 }
 
 # Logging Configuration
@@ -214,7 +214,7 @@ LOGGING = {
         'file': {
             'level': LOG_LEVEL,
             'class': 'logging.FileHandler',
-            'filename': os.path.join(LOG_FILE_PATH, 'payment_gateway.log'),
+            'filename': '/home/lumenario/lumenario/logs/payment_gateway.log',
             'formatter': 'verbose',
         },
         'console': {
@@ -258,8 +258,8 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
 EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
-EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='gilbertketer759@gmail.com')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='lcepjkszvrlwaxly')
 
 # Monitoring
 ENABLE_MONITORING = config('ENABLE_MONITORING', default=False, cast=bool)
