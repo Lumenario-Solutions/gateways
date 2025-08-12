@@ -1,9 +1,14 @@
 """
 API Key authentication system for the payment gateway.
+
+This module provides API key and signature-based authentication for clients,
+completely replacing Django's session-based authentication for API access.
 """
 
+from typing import Optional, Tuple, Union, Any
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.request import Request
 from django.utils.translation import gettext_lazy as _
 from django.core.cache import cache
 from clients.models import Client, ClientAPIKey
@@ -26,9 +31,16 @@ class APIKeyAuthentication(BaseAuthentication):
 
     keyword = 'ApiKey'
 
-    def authenticate(self, request):
+    def authenticate(self, request: Request) -> Optional[Tuple[Client, None]]:
         """
-        Authenticate the request and return a two-tuple of (user, token).
+        Authenticate the request and return a two-tuple of (client, token).
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            Tuple[Client, None] or None: Client object and None (no token needed),
+                                        or None if authentication not attempted
         """
         try:
             # Try Authorization header first
@@ -60,24 +72,54 @@ class APIKeyAuthentication(BaseAuthentication):
             logger.error(f"Authentication error: {e}")
             raise AuthenticationFailed(_('Invalid authentication credentials.'))
 
-    def get_authorization_header(self, request):
-        """Get authorization header from request."""
+    def get_authorization_header(self, request: Request) -> Optional[str]:
+        """
+        Get authorization header from request.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            Optional[str]: Authorization header value or None
+        """
         auth = request.META.get('HTTP_AUTHORIZATION', '').strip()
         if auth.startswith(f'{self.keyword} '):
             return auth[len(self.keyword) + 1:]
         return None
 
-    def parse_authorization_header(self, auth_header):
-        """Parse API key and secret from authorization header."""
+    def parse_authorization_header(self, auth_header: str) -> Tuple[str, str]:
+        """
+        Parse API key and secret from authorization header.
+
+        Args:
+            auth_header: The authorization header value
+
+        Returns:
+            Tuple[str, str]: API key and secret
+
+        Raises:
+            AuthenticationFailed: If header format is invalid
+        """
         try:
             api_key, api_secret = auth_header.split(':', 1)
             return api_key.strip(), api_secret.strip()
         except ValueError:
             raise AuthenticationFailed(_('Invalid authorization header format.'))
 
-    def authenticate_credentials(self, api_key, api_secret, request):
+    def authenticate_credentials(self, api_key: str, api_secret: str, request: Request) -> Client:
         """
         Authenticate API key and secret.
+
+        Args:
+            api_key: The API key to validate
+            api_secret: The API secret to validate
+            request: The HTTP request object
+
+        Returns:
+            Client: The authenticated client
+
+        Raises:
+            AuthenticationFailed: If credentials are invalid
         """
         # Check cache first for performance
         cache_key = f"api_auth:{api_key}"
@@ -132,19 +174,33 @@ class APIKeyAuthentication(BaseAuthentication):
 
         return client
 
-    def get_client_ip(self, request):
-        """Get client IP address from request."""
+    def get_client_ip(self, request: Request) -> str:
+        """
+        Get client IP address from request.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            str: Client IP address
+        """
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
             ip = x_forwarded_for.split(',')[0].strip()
         else:
-            ip = request.META.get('REMOTE_ADDR')
+            ip = request.META.get('REMOTE_ADDR', '127.0.0.1')
         return ip
 
-    def authenticate_header(self, request):
+    def authenticate_header(self, request: Request) -> str:
         """
         Return a string to be used as the value of the `WWW-Authenticate`
         header in a `401 Unauthenticated` response.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            str: Authentication header value
         """
         return f'{self.keyword} realm="API"'
 
@@ -161,8 +217,16 @@ class SignatureAuthentication(BaseAuthentication):
     Signature is HMAC-SHA256 of: HTTP_METHOD + URI + TIMESTAMP + BODY
     """
 
-    def authenticate(self, request):
-        """Authenticate using HMAC signature."""
+    def authenticate(self, request: Request) -> Optional[Tuple[Client, None]]:
+        """
+        Authenticate using HMAC signature.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            Tuple[Client, None] or None: Client object and None, or None if not attempted
+        """
         api_key = request.META.get('HTTP_X_API_KEY')
         signature = request.META.get('HTTP_X_SIGNATURE')
         timestamp = request.META.get('HTTP_X_TIMESTAMP')
@@ -199,8 +263,19 @@ class SignatureAuthentication(BaseAuthentication):
             logger.error(f"Signature authentication error: {e}")
             raise AuthenticationFailed(_('Authentication failed.'))
 
-    def verify_signature(self, request, client, provided_signature, timestamp):
-        """Verify HMAC signature."""
+    def verify_signature(self, request: Request, client: Client, provided_signature: str, timestamp: str) -> bool:
+        """
+        Verify HMAC signature.
+
+        Args:
+            request: The HTTP request object
+            client: The client making the request
+            provided_signature: The signature provided in the request
+            timestamp: The timestamp from the request
+
+        Returns:
+            bool: True if signature is valid
+        """
         try:
             import hmac
             import hashlib
@@ -232,8 +307,16 @@ class SignatureAuthentication(BaseAuthentication):
             logger.error(f"Signature verification error: {e}")
             return False
 
-    def authenticate_header(self, request):
-        """Return authentication header for 401 responses."""
+    def authenticate_header(self, request: Request) -> str:
+        """
+        Return authentication header for 401 responses.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            str: Authentication header value
+        """
         return 'Signature realm="API"'
 
 
@@ -247,8 +330,16 @@ class MultiAuthentication(BaseAuthentication):
         self.api_key_auth = APIKeyAuthentication()
         self.signature_auth = SignatureAuthentication()
 
-    def authenticate(self, request):
-        """Try multiple authentication methods."""
+    def authenticate(self, request: Request) -> Optional[Tuple[Client, None]]:
+        """
+        Try multiple authentication methods.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            Tuple[Client, None] or None: Client object and None, or None if no auth succeeds
+        """
         # Try API key authentication first
         result = self.api_key_auth.authenticate(request)
         if result:
@@ -261,6 +352,14 @@ class MultiAuthentication(BaseAuthentication):
 
         return None
 
-    def authenticate_header(self, request):
-        """Return combined authentication header."""
+    def authenticate_header(self, request: Request) -> str:
+        """
+        Return combined authentication header.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            str: Combined authentication header value
+        """
         return f'{self.api_key_auth.authenticate_header(request)}, {self.signature_auth.authenticate_header(request)}'

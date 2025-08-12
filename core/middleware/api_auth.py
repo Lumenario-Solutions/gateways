@@ -1,13 +1,17 @@
 """
 API authentication and rate limiting middleware.
+
+Middleware components for API key authentication, rate limiting, and security.
+All middleware assumes Client objects are used instead of Django Users.
 """
 
 import time
 import json
-from django.http import JsonResponse
+from typing import Optional, Union
+from django.http import JsonResponse, HttpRequest, HttpResponse
 from django.core.cache import cache
 from django.utils.deprecation import MiddlewareMixin
-from clients.models import APIUsageLog
+from clients.models import APIUsageLog, Client
 from core.utils.encryption import encryption_manager
 import logging
 
@@ -23,8 +27,16 @@ class APIKeyAuthenticationMiddleware(MiddlewareMixin):
         self.get_response = get_response
         super().__init__(get_response)
 
-    def process_request(self, request):
-        """Process incoming request for API authentication."""
+    def process_request(self, request: HttpRequest) -> Optional[HttpResponse]:
+        """
+        Process incoming request for API authentication.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            Optional[HttpResponse]: None to continue processing, or error response
+        """
         # Skip authentication for non-API endpoints
         if not request.path.startswith('/api/'):
             return None
@@ -46,20 +58,37 @@ class APIKeyAuthenticationMiddleware(MiddlewareMixin):
 
         return None
 
-    def process_response(self, request, response):
-        """Process response and log API usage."""
+    def process_response(self, request: HttpRequest, response: HttpResponse) -> HttpResponse:
+        """
+        Process response and log API usage.
+
+        Args:
+            request: The HTTP request object
+            response: The HTTP response object
+
+        Returns:
+            HttpResponse: The response object
+        """
         # Only process API endpoints
         if not request.path.startswith('/api/'):
             return response
 
-        # Log API usage if client is authenticated
-        if hasattr(request, 'user') and hasattr(request.user, 'client_id'):
+        # Log API usage if client is authenticated and is a Client instance
+        if (hasattr(request, 'user') and
+            isinstance(request.user, Client) and
+            hasattr(request.user, 'client_id')):
             self.log_api_usage(request, response)
 
         return response
 
-    def log_api_usage(self, request, response):
-        """Log API usage for monitoring and billing."""
+    def log_api_usage(self, request: HttpRequest, response: HttpResponse) -> None:
+        """
+        Log API usage for monitoring and billing.
+
+        Args:
+            request: The HTTP request object
+            response: The HTTP response object
+        """
         try:
             # Calculate response time
             response_time = 0
@@ -88,13 +117,21 @@ class APIKeyAuthenticationMiddleware(MiddlewareMixin):
         except Exception as e:
             logger.error(f"Failed to log API usage: {e}")
 
-    def get_client_ip(self, request):
-        """Get client IP address."""
+    def get_client_ip(self, request: HttpRequest) -> str:
+        """
+        Get client IP address.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            str: Client IP address
+        """
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
             ip = x_forwarded_for.split(',')[0].strip()
         else:
-            ip = request.META.get('REMOTE_ADDR', '')
+            ip = request.META.get('REMOTE_ADDR', '127.0.0.1')
         return ip
 
 
@@ -170,13 +207,21 @@ class RateLimitMiddleware(MiddlewareMixin):
             logger.error(f"Error checking rate limit: {e}")
             return False  # Allow request if rate limit check fails
 
-    def get_client_ip(self, request):
-        """Get client IP address."""
+    def get_client_ip(self, request: HttpRequest) -> str:
+        """
+        Get client IP address.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            str: Client IP address
+        """
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
             ip = x_forwarded_for.split(',')[0].strip()
         else:
-            ip = request.META.get('REMOTE_ADDR', '')
+            ip = request.META.get('REMOTE_ADDR', '127.0.0.1')
         return ip
 
 

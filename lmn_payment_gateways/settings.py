@@ -131,10 +131,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Django REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'core.authentication.APIKeyAuthentication',
+        'core.authentication.MultiAuthentication',  # Use multi-auth for flexibility
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'clients.permissions.api_client_permissions.IsValidClient',  # Use our custom permission
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',

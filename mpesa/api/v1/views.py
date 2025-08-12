@@ -1,11 +1,16 @@
 """
 MPesa API v1 views for handling payment operations.
+
+All views use API key authentication and work with Client objects.
 """
 
+from typing import Optional, Dict, Any
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.request import Request
 from rest_framework.permissions import IsAuthenticated
+from clients.permissions.api_client_permissions import IsValidClient, ClientOwnerPermission
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -13,6 +18,7 @@ from django.db.models import Q
 from django.core.cache import cache
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from clients.models import Client
 
 from mpesa.models import Transaction, CallbackLog, MpesaConfiguration
 from mpesa.services.stk_push_service import STKPushService
@@ -42,10 +48,18 @@ class STKPushInitiateView(APIView):
 
     POST /api/v1/mpesa/initiate/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
-    def post(self, request):
-        """Initiate STK Push payment."""
+    def post(self, request: Request) -> Response:
+        """
+        Initiate STK Push payment.
+
+        Args:
+            request: The HTTP request containing payment details
+
+        Returns:
+            Response: JSON response with transaction details or error
+        """
         try:
             # Validate request data
             serializer = STKPushInitiateSerializer(data=request.data)
@@ -58,7 +72,24 @@ class STKPushInitiateView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST)
 
             validated_data = serializer.validated_data
-            client = request.user  # Client from authentication
+
+            # Explicit client validation and type checking
+            client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in STK Push request: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
+            if not hasattr(client, 'client_id'):
+                logger.error("Client missing client_id attribute")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client configuration',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
 
             # Get client IP and user agent
             client_ip = self._get_client_ip(request)
@@ -115,12 +146,20 @@ class STKPushInitiateView(APIView):
                 'timestamp': timezone.now()
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def _get_client_ip(self, request):
-        """Get client IP address."""
+    def _get_client_ip(self, request: Request) -> str:
+        """
+        Get client IP address.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            str: Client IP address
+        """
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
             return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        return request.META.get('REMOTE_ADDR', '127.0.0.1')
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -185,12 +224,20 @@ class MPesaCallbackView(APIView):
                 'ResultDesc': 'Callback processing failed'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def _get_client_ip(self, request):
-        """Get client IP address."""
+    def _get_client_ip(self, request: Request) -> str:
+        """
+        Get client IP address.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            str: Client IP address
+        """
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
             return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        return request.META.get('REMOTE_ADDR', '127.0.0.1')
 
 
 class PaymentStatusView(APIView):
@@ -199,14 +246,31 @@ class PaymentStatusView(APIView):
 
     GET /api/v1/mpesa/status/<transaction_id>/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
-    def get(self, request, transaction_id):
-        """Get payment status."""
+    def get(self, request: Request, transaction_id: str) -> Response:
+        """
+        Get payment status.
+
+        Args:
+            request: The HTTP request object
+            transaction_id: The transaction ID to check
+
+        Returns:
+            Response: JSON response with transaction status
+        """
         try:
+            # Explicit client validation and type checking
             client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in payment status request: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
 
-            # Get transaction
+            # Get transaction (ensures client can only access their own transactions)
             transaction = get_object_or_404(
                 Transaction,
                 transaction_id=transaction_id,
@@ -237,10 +301,18 @@ class ManualValidationView(APIView):
 
     POST /api/v1/mpesa/validate/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
-    def post(self, request):
-        """Validate manual payment."""
+    def post(self, request: Request) -> Response:
+        """
+        Validate manual payment.
+
+        Args:
+            request: The HTTP request containing payment validation data
+
+        Returns:
+            Response: JSON response with validation result
+        """
         try:
             # Validate request data
             serializer = ManualValidationSerializer(data=request.data)
@@ -253,7 +325,16 @@ class ManualValidationView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST)
 
             validated_data = serializer.validated_data
+
+            # Explicit client validation and type checking
             client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in manual validation request: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
 
             # Check for duplicate receipt numbers
             existing_transaction = Transaction.objects.filter(
@@ -306,12 +387,20 @@ class ManualValidationView(APIView):
                 'timestamp': timezone.now()
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def _get_client_ip(self, request):
-        """Get client IP address."""
+    def _get_client_ip(self, request: Request) -> str:
+        """
+        Get client IP address.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            str: Client IP address
+        """
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
             return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        return request.META.get('REMOTE_ADDR', '127.0.0.1')
 
 
 class TransactionListView(APIView):
@@ -320,13 +409,29 @@ class TransactionListView(APIView):
 
     GET /api/v1/mpesa/transactions/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
     serializer_class = TransactionListSerializer
 
-    def get(self, request):
-        """Get transaction list."""
+    def get(self, request: Request) -> Response:
+        """
+        Get transaction list.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            Response: JSON response with paginated transaction list
+        """
         try:
+            # Explicit client validation and type checking
             client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in transaction list request: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
 
             # Get query parameters
             status_filter = request.query_params.get('status')
@@ -401,10 +506,18 @@ class BulkStatusCheckView(APIView):
 
     POST /api/v1/mpesa/bulk-status/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
-    def post(self, request):
-        """Check bulk transaction status."""
+    def post(self, request: Request) -> Response:
+        """
+        Check bulk transaction status.
+
+        Args:
+            request: The HTTP request containing transaction IDs
+
+        Returns:
+            Response: JSON response with bulk status results
+        """
         try:
             # Validate request data
             serializer = BulkStatusCheckSerializer(data=request.data)
@@ -417,7 +530,16 @@ class BulkStatusCheckView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST)
 
             transaction_ids = serializer.validated_data['transaction_ids']
+
+            # Explicit client validation and type checking
             client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in bulk status request: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
 
             # Get transactions
             transactions = Transaction.objects.filter(
@@ -471,10 +593,18 @@ class ConnectionTestView(APIView):
 
     POST /api/v1/mpesa/test-connection/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
-    def post(self, request):
-        """Test MPesa connection."""
+    def post(self, request: Request) -> Response:
+        """
+        Test MPesa connection.
+
+        Args:
+            request: The HTTP request containing test parameters
+
+        Returns:
+            Response: JSON response with connection test results
+        """
         try:
             serializer = ConnectionTestSerializer(data=request.data)
             if not serializer.is_valid():

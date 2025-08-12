@@ -1,10 +1,14 @@
 """
 Client management views for API client operations.
+
+All views use API key authentication and work with Client objects.
 """
 
+from typing import Dict, Any, Optional
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.request import Request
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
@@ -12,6 +16,9 @@ from django.utils import timezone
 from django.db.models import Q, Sum, Count, Avg
 from django.core.cache import cache
 from datetime import datetime, timedelta
+
+# Import our custom permissions
+from clients.permissions.api_client_permissions import IsValidClient, ClientOwnerPermission
 
 from clients.models import Client, ClientConfiguration, ClientAPIKey, APIUsageLog
 from mpesa.models import Transaction
@@ -101,12 +108,29 @@ class ClientProfileView(APIView):
     GET /api/v1/clients/profile/
     PUT /api/v1/clients/profile/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
-    def get(self, request):
-        """Get client profile."""
+    def get(self, request: Request) -> Response:
+        """
+        Get client profile.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            Response: JSON response with client profile data
+        """
         try:
+            # Explicit client validation and type checking
             client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in profile request: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
             serializer = ClientResponseSerializer(client)
 
             return Response({
@@ -123,10 +147,26 @@ class ClientProfileView(APIView):
                 'timestamp': timezone.now()
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def put(self, request):
-        """Update client profile."""
+    def put(self, request: Request) -> Response:
+        """
+        Update client profile.
+
+        Args:
+            request: The HTTP request containing profile updates
+
+        Returns:
+            Response: JSON response with updated profile data
+        """
         try:
+            # Explicit client validation and type checking
             client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in profile update request: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
 
             # Validate update data
             serializer = ClientUpdateSerializer(client, data=request.data, partial=True)
@@ -169,12 +209,29 @@ class APIKeyManagementView(APIView):
     GET /api/v1/clients/api-keys/
     POST /api/v1/clients/api-keys/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
-    def get(self, request):
-        """List client's API keys."""
+    def get(self, request: Request) -> Response:
+        """
+        List client's API keys.
+
+        Args:
+            request: The HTTP request object
+
+        Returns:
+            Response: JSON response with list of API keys
+        """
         try:
+            # Explicit client validation and type checking
             client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in API keys list request: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
             api_keys = ClientAPIKey.objects.filter(client=client).order_by('-created_at')
 
             serializer = APIKeyListSerializer(api_keys, many=True)
@@ -196,10 +253,26 @@ class APIKeyManagementView(APIView):
                 'timestamp': timezone.now()
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def post(self, request):
-        """Generate new API key."""
+    def post(self, request: Request) -> Response:
+        """
+        Generate new API key.
+
+        Args:
+            request: The HTTP request containing API key generation parameters
+
+        Returns:
+            Response: JSON response with new API key details
+        """
         try:
+            # Explicit client validation and type checking
             client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in API key generation request: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
 
             # Validate request data
             serializer = APIKeyGenerationSerializer(data=request.data)
