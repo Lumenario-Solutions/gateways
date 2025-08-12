@@ -321,6 +321,7 @@ class TransactionListView(APIView):
     GET /api/v1/mpesa/transactions/
     """
     permission_classes = [IsAuthenticated]
+    serializer_class = TransactionListSerializer
 
     def get(self, request):
         """Get transaction list."""
