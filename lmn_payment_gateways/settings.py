@@ -83,16 +83,27 @@ DATABASES = {
     )
 }
 
-# Cache Configuration
+# Upstash REST API
+UPSTASH_REDIS_REST_URL = config("UPSTASH_REDIS_REST_URL")
+UPSTASH_REDIS_REST_TOKEN = config("UPSTASH_REDIS_REST_TOKEN")
+
 CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': config('REDIS_URL', default='redis://default:wNiZ5CaF3d282dcie32bicHwnpcRsJGU@redis-17938.c257.us-east-1-3.ec2.redns.redis-cloud.com:17938'),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-        }
+    "default": {
+        "BACKEND": "core.cache.upstash_rest_cache.UpstashRestCache",
+        "LOCATION": "",
     }
 }
+
+# # Cache Configuration
+# CACHES = {
+#     'default': {
+#         'BACKEND': 'django_redis.cache.RedisCache',
+#         'LOCATION': config('REDIS_URL', default='redis://default:wNiZ5CaF3d282dcie32bicHwnpcRsJGU@redis-17938.c257.us-east-1-3.ec2.redns.redis-cloud.com:17938'),
+#         'OPTIONS': {
+#             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+#         }
+#     }
+# }
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [

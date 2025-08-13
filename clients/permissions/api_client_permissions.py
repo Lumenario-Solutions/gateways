@@ -35,7 +35,7 @@ class IsValidClient(BasePermission):
             bool: True if client is valid and active
         """
         # Check if user exists and is authenticated
-        if not request.user or not request.user.is_authenticated:
+        if not request.user:
             return False
 
         # Ensure request.user is a Client instance, not a Django User
