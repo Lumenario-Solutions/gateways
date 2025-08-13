@@ -38,7 +38,7 @@ class MpesaClient:
         if self._credentials is None:
             try:
                 from mpesa.models import MpesaCredentials
-                self._credentials = MpesaCredentials.objects.get_active_credentials(self.environment)
+                self._credentials = MpesaCredentials.objects.get_active_credentials(environment=self.environment)
                 if not self._credentials:
                     raise ConfigurationException(
                         f"No MPesa credentials found for environment: {self.environment}"

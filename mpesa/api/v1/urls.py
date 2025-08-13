@@ -23,4 +23,7 @@ urlpatterns = [
     # Utility endpoints
     path('test-connection/', views.ConnectionTestView.as_view(), name='test-connection'),
     path('health/', views.health_check, name='health-check'),
+
+    # MPesa credentials management
+    path('credentials/', views.MPesaCredentialsView.as_view(), name='mpesa-credentials'),
 ]

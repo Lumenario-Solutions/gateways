@@ -20,7 +20,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from clients.models import Client
 
-from mpesa.models import Transaction, CallbackLog, MpesaConfiguration
+from mpesa.models import Transaction, CallbackLog, MpesaConfiguration, MpesaCredentials
 from mpesa.services.stk_push_service import STKPushService
 from mpesa.services.callback_service import CallbackService
 from mpesa.services.transaction_service import TransactionService
@@ -681,3 +681,133 @@ def health_check(request):
             'message': 'Health check failed',
             'timestamp': timezone.now()
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class MPesaCredentialsView(APIView):
+    """
+    Manage MPesa credentials for a client.
+
+    POST /api/v1/mpesa/credentials/
+    """
+    permission_classes = [IsValidClient]
+
+    def post(self, request: Request) -> Response:
+        """
+        Create or update MPesa credentials for a client.
+
+        Expected payload:
+        {
+            "client_id": "uuid-string",
+            "name": "My MPesa Credentials",
+            "environment": "sandbox" or "live",
+            "consumer_key": "your-consumer-key",
+            "consumer_secret": "your-consumer-secret",
+            "business_shortcode": "174379",
+            "passkey": "your-passkey",
+            "initiator_name": "testapi",
+            "security_credential": "your-security-credential"
+        }
+        """
+        try:
+            # Extract data from request
+            data = request.data
+
+            # Validate required fields
+            required_fields = [
+                'client_id', 'name', 'environment', 'consumer_key',
+                'consumer_secret', 'business_shortcode', 'passkey',
+                'initiator_name', 'security_credential'
+            ]
+
+            missing_fields = []
+            for field in required_fields:
+                if field not in data or not data[field]:
+                    missing_fields.append(field)
+
+            if missing_fields:
+                return Response({
+                    'error': 'Missing required fields',
+                    'missing_fields': missing_fields,
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate client exists
+            try:
+                client = Client.objects.get(client_id=data['client_id'])
+            except Client.DoesNotExist:
+                return Response({
+                    'error': 'Client not found',
+                    'message': f"Client with ID {data['client_id']} does not exist",
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Validate environment
+            environment = data['environment'].lower()
+            if environment not in ['sandbox', 'live']:
+                return Response({
+                    'error': 'Invalid environment',
+                    'message': "Environment must be 'sandbox' or 'live'",
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check if credentials already exist for this client and environment
+            existing_credentials = MpesaCredentials.objects.filter(
+                client=client,
+                environment=environment,
+                is_active=True
+            ).first()
+
+            if existing_credentials:
+                # Update existing credentials
+                credentials = existing_credentials
+                credentials.name = data['name']
+                credentials.business_shortcode = data['business_shortcode']
+                credentials.initiator_name = data['initiator_name']
+            else:
+                # Create new credentials
+                credentials = MpesaCredentials(
+                    client=client,
+                    name=data['name'],
+                    environment=environment,
+                    business_shortcode=data['business_shortcode'],
+                    initiator_name=data['initiator_name'],
+                    is_active=True
+                )
+
+            # Set encrypted credentials using the model's method
+            credentials.set_credentials(
+                consumer_key=data['consumer_key'],
+                consumer_secret=data['consumer_secret'],
+                passkey=data['passkey'],
+                security_credential=data['security_credential']
+            )
+
+            # Save the credentials (this will also set the base_url)
+            credentials.save()
+
+            logger.info(f"MPesa credentials {'updated' if existing_credentials else 'created'} for client {client.client_id}")
+
+            return Response({
+                'success': True,
+                'message': f"MPesa credentials {'updated' if existing_credentials else 'created'} successfully",
+                'data': {
+                    'credential_id': str(credentials.id),
+                    'client_id': str(client.client_id),
+                    'name': credentials.name,
+                    'environment': credentials.environment,
+                    'business_shortcode': credentials.business_shortcode,
+                    'base_url': credentials.base_url,
+                    'is_active': credentials.is_active,
+                    'created_at': credentials.created_at,
+                    'updated_at': credentials.updated_at
+                },
+                'timestamp': timezone.now()
+            }, status=status.HTTP_201_CREATED if not existing_credentials else status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error managing MPesa credentials: {e}")
+            return Response({
+                'error': 'Failed to manage credentials',
+                'message': 'An error occurred while processing MPesa credentials',
+                'timestamp': timezone.now()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

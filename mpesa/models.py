@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 class MpesaCredentialsManager(models.Manager):
     """Custom manager for MPesa credentials."""
 
-    def get_active_credentials(self, environment='sandbox'):
-        """Get active MPesa credentials for environment."""
+    def get_active_credentials(self, client, environment='sandbox'):
+        """Get active MPesa credentials for client and environment."""
         try:
-            return self.get(environment=environment, is_active=True)
+            return self.get(client=client, environment=environment, is_active=True)
         except self.model.DoesNotExist:
-            logger.error(f"No active MPesa credentials found for environment: {environment}")
+            logger.error(f"No active MPesa credentials found for client {client.client_id} in environment: {environment}")
             return None
 
 
@@ -36,6 +36,14 @@ class MpesaCredentials(models.Model):
         ('live', 'Live'),
     ]
 
+    client = models.ForeignKey(
+        Client,
+        on_delete=models.CASCADE,
+        related_name='mpesa_credentials',
+        help_text="Client who owns these credentials",
+        null=True, 
+        blank=True
+    )
     name = models.CharField(
         max_length=255,
         help_text="Credential set name"
@@ -89,7 +97,7 @@ class MpesaCredentials(models.Model):
         db_table = 'mpesa_credentials'
         verbose_name = 'MPesa Credentials'
         verbose_name_plural = 'MPesa Credentials'
-        unique_together = ['environment', 'is_active']
+        unique_together = ['client', 'environment', 'is_active']
 
     def __str__(self):
         return f"{self.name} ({self.environment})"
@@ -200,7 +208,9 @@ class Transaction(models.Model):
     client = models.ForeignKey(
         Client,
         on_delete=models.CASCADE,
-        related_name='transactions'
+        related_name='transactions',
+        null=True,
+        blank=True
     )
 
     # Transaction details
