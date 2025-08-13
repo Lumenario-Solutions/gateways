@@ -19,6 +19,10 @@ class MpesaCredentialsManager(models.Manager):
 
     def get_active_credentials(self, client, environment='sandbox'):
         """Get active MPesa credentials for client and environment."""
+        if not client:
+            logger.error("Client parameter is required for get_active_credentials")
+            return None
+
         try:
             return self.get(client=client, environment=environment, is_active=True)
         except self.model.DoesNotExist:
@@ -41,8 +45,7 @@ class MpesaCredentials(models.Model):
         on_delete=models.CASCADE,
         related_name='mpesa_credentials',
         help_text="Client who owns these credentials",
-        null=True, 
-        blank=True
+        default='79e8dc5bf9544264917f74a7f55c05ab'
     )
     name = models.CharField(
         max_length=255,
@@ -209,8 +212,7 @@ class Transaction(models.Model):
         Client,
         on_delete=models.CASCADE,
         related_name='transactions',
-        null=True,
-        blank=True
+        default='79e8dc5bf9544264917f74a7f55c05ab'
     )
 
     # Transaction details

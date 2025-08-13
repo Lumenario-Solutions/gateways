@@ -22,26 +22,35 @@ class MpesaClient:
     Main MPesa API client for handling authentication and API requests.
     """
 
-    def __init__(self, environment='sandbox'):
+    def __init__(self, environment='sandbox', client=None):
         """
         Initialize MPesa client.
 
         Args:
             environment (str): 'sandbox' or 'live'
+            client: Client instance for accessing client-specific credentials
         """
         self.environment = environment
+        self.client_instance = client
         self._credentials = None  # Lazy loading
         self.timeout = getattr(settings, 'MPESA_CONFIG', {}).get('api_timeout_seconds', 30)
 
     def _get_credentials(self):
-        """Get MPesa credentials for the environment (lazy loading)."""
+        """Get MPesa credentials for the environment and client (lazy loading)."""
         if self._credentials is None:
             try:
                 from mpesa.models import MpesaCredentials
-                self._credentials = MpesaCredentials.objects.get_active_credentials(environment=self.environment)
+                if not self.client_instance:
+                    raise ConfigurationException(
+                        "Client instance is required to access MPesa credentials"
+                    )
+                self._credentials = MpesaCredentials.objects.get_active_credentials(
+                    client=self.client_instance,
+                    environment=self.environment
+                )
                 if not self._credentials:
                     raise ConfigurationException(
-                        f"No MPesa credentials found for environment: {self.environment}"
+                        f"No MPesa credentials found for client {self.client_instance.client_id} in environment: {self.environment}"
                     )
             except Exception as e:
                 # Handle database not ready or other errors gracefully
@@ -335,37 +344,25 @@ class MpesaClient:
             raise MPesaException(f"Failed to get account balance: {e}")
 
 
-# Singleton instances for different environments
-_sandbox_client = None
-_live_client = None
+# Note: Removed singleton pattern to support client-specific credentials
 
 
-def get_mpesa_client(environment='sandbox'):
+def get_mpesa_client(environment='sandbox', client=None):
     """
-    Get MPesa client instance (singleton pattern).
+    Get MPesa client instance.
 
     Args:
         environment (str): 'sandbox' or 'live'
+        client: Client instance for accessing client-specific credentials
 
     Returns:
         MpesaClient: MPesa client instance
     """
-    global _sandbox_client, _live_client
-
-    if environment == 'sandbox':
-        if _sandbox_client is None:
-            _sandbox_client = MpesaClient('sandbox')
-        return _sandbox_client
-    elif environment == 'live':
-        if _live_client is None:
-            _live_client = MpesaClient('live')
-        return _live_client
-    else:
-        raise ValueError(f"Invalid environment: {environment}")
+    # Note: Removed singleton pattern since each client needs their own credentials
+    return MpesaClient(environment, client)
 
 
 def clear_client_cache():
     """Clear cached client instances (useful for testing)."""
-    global _sandbox_client, _live_client
-    _sandbox_client = None
-    _live_client = None
+    # Note: No longer using singleton pattern, so this is a no-op
+    pass

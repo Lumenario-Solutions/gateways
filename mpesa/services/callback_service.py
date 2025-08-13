@@ -298,12 +298,20 @@ class CallbackService:
             except Exception:
                 formatted_phone = msisdn
 
-            # For C2B, we don't have a specific client, so we'll need to handle this
-            # This could be enhanced to match based on shortcode or other criteria
-            # For now, we'll create the transaction without a client
+            # For C2B, we need to determine the client based on business shortcode
+            # For now, we'll use the default client ID as transactions require a client
+            from clients.models import Client
+
+            try:
+                # Try to find client by shortcode or use default
+                default_client = Client.objects.get(client_id='79e8dc5bf9544264917f74a7f55c05ab')
+            except Client.DoesNotExist:
+                logger.error("Default client not found for C2B transaction")
+                return None
 
             # Create transaction
             transaction = Transaction.objects.create(
+                client=default_client,
                 transaction_type=transaction_type,
                 phone_number=formatted_phone,
                 amount=trans_amount,

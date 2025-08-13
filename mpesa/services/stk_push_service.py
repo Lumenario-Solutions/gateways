@@ -20,15 +20,17 @@ class STKPushService:
     Service for handling STK Push (Lipa na M-Pesa Online) transactions.
     """
 
-    def __init__(self, environment=None):
+    def __init__(self, environment=None, client=None):
         """
         Initialize STK Push service.
 
         Args:
             environment (str): 'sandbox' or 'live' (defaults to settings)
+            client: Client instance for accessing client-specific credentials
         """
         self.environment = environment or settings.MPESA_CONFIG.get('ENVIRONMENT', 'sandbox')
-        self.client = get_mpesa_client(self.environment)
+        self.client_instance = client
+        self.client = get_mpesa_client(self.environment, client) if client else None
         self.config = MpesaConfiguration.get_config()
 
     def initiate_stk_push(self, client, phone_number, amount, description,
@@ -52,6 +54,10 @@ class STKPushService:
             dict: STK Push response with transaction details
         """
         try:
+            # Initialize the MPesa client with the specific client if not already done
+            if not self.client:
+                self.client = get_mpesa_client(self.environment, client)
+
             # Validate inputs
             self._validate_stk_push_inputs(phone_number, amount, description)
 
@@ -210,11 +216,20 @@ class STKPushService:
             dict: Transaction status information
         """
         try:
-            # Get transaction
+            if not self.client_instance:
+                raise ValidationException("Client instance is required for transaction queries")
+
+            # Get transaction filtered by client
             if transaction_id:
-                transaction = Transaction.objects.get(transaction_id=transaction_id)
+                transaction = Transaction.objects.get(
+                    transaction_id=transaction_id,
+                    client=self.client_instance
+                )
             elif checkout_request_id:
-                transaction = Transaction.objects.get(checkout_request_id=checkout_request_id)
+                transaction = Transaction.objects.get(
+                    checkout_request_id=checkout_request_id,
+                    client=self.client_instance
+                )
             else:
                 raise ValidationException("Either transaction_id or checkout_request_id is required")
 
@@ -313,7 +328,13 @@ class STKPushService:
             dict: Cancellation result
         """
         try:
-            transaction = Transaction.objects.get(transaction_id=transaction_id)
+            if not self.client_instance:
+                raise ValidationException("Client instance is required for transaction operations")
+
+            transaction = Transaction.objects.get(
+                transaction_id=transaction_id,
+                client=self.client_instance
+            )
 
             if transaction.status not in ['PENDING', 'PROCESSING']:
                 raise ValidationException(f"Cannot cancel transaction with status: {transaction.status}")

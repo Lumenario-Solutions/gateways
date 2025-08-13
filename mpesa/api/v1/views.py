@@ -95,8 +95,8 @@ class STKPushInitiateView(APIView):
             client_ip = self._get_client_ip(request)
             user_agent = request.META.get('HTTP_USER_AGENT', '')
 
-            # Initialize STK Push service
-            stk_service = STKPushService()
+            # Initialize STK Push service with client
+            stk_service = STKPushService(client=client)
 
             # Initiate payment
             result = stk_service.initiate_stk_push(
@@ -198,8 +198,10 @@ class MPesaCallbackView(APIView):
             # Process callback
             callback_service = CallbackService()
             result = callback_service.process_stk_callback(
-                request.data,
-                callback_log
+                request_data=request.data,
+                ip_address=self._get_client_ip(request),
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                headers=dict(request.META)
             )
 
             callback_log.mark_as_processed(success=True)
@@ -616,10 +618,20 @@ class ConnectionTestView(APIView):
 
             environment = serializer.validated_data.get('environment', 'sandbox')
 
-            # Test connection
+            # Test connection with authenticated client
             from mpesa.mpesa_client import get_mpesa_client
-            client = get_mpesa_client(environment)
-            result = client.test_connection()
+
+            # Get the authenticated client
+            authenticated_client = request.user
+            if not isinstance(authenticated_client, Client):
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
+            mpesa_client = get_mpesa_client(environment, authenticated_client)
+            result = mpesa_client.test_connection()
 
             return Response({
                 'success': True,
