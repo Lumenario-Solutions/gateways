@@ -22,7 +22,7 @@ api_patterns = [
     path('redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 
     # Health check
-    path('health/', include('core.urls')),
+    path('', include('core.urls')),
 
     # Client management
     path('clients/', include('clients.urls')),
