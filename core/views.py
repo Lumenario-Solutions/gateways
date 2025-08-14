@@ -643,7 +643,7 @@ def system_status(request):
 
         # MPesa service check
         try:
-            from mpesa.services.mpesa_client import get_mpesa_client
+            from mpesa.mpesa_client import get_mpesa_client
 
             start_time = time.time()
             client = get_mpesa_client('sandbox')
