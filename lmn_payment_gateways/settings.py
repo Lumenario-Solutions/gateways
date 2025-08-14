@@ -32,6 +32,7 @@ THIRD_PARTY_APPS = [
     'corsheaders',
     'drf_spectacular',
     'django_structlog',
+    'django_filters',
 ]
 
 LOCAL_APPS = [
@@ -93,17 +94,6 @@ CACHES = {
         "LOCATION": "",
     }
 }
-
-# # Cache Configuration
-# CACHES = {
-#     'default': {
-#         'BACKEND': 'django_redis.cache.RedisCache',
-#         'LOCATION': config('REDIS_URL', default='redis://default:wNiZ5CaF3d282dcie32bicHwnpcRsJGU@redis-17938.c257.us-east-1-3.ec2.redns.redis-cloud.com:17938'),
-#         'OPTIONS': {
-#             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-#         }
-#     }
-# }
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [

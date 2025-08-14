@@ -1,560 +1,393 @@
-"""
-Core views for health checks and error handling.
-"""
 
 import time
 import logging
 import uuid
+from datetime import timedelta
 from typing import Optional, Dict, Any
 
-from django.http import JsonResponse
-from django.db import connection
-from django.core.cache import cache
+from django_filters.rest_framework import DjangoFilterBackend
+import django_filters
 from django.conf import settings
+from django.core.cache import cache
+from django.db import connection
+from django.db.models import Q, Count
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.db.models import Q
 
-from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework import status, permissions, viewsets
+from rest_framework.decorators import (
+    api_view,
+    permission_classes,
+    action
+)
+from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.request import Request
 
-from clients.permissions.api_client_permissions import IsValidClient
 from clients.models import Client
+from clients.permissions.api_client_permissions import IsValidClient
 from core.models import ClientEnvironmentVariable, Notification
 from core.utils.notification_service import send_notification, notify_credentials_updated
 
-logger = logging.getLogger(__name__)
+from .models import ActivityLog
+from .serializers import (
+    ActivityLogSerializer,
+    ActivityLogListSerializer,
+    ActivityLogStatsSerializer,
+    NotificationSerializer,
+    ClientEnvironmentVariableSerializer
+)
 
 
-class ClientEnvironmentVariableView(APIView):
+
+class ActivityLogFilter(django_filters.FilterSet):
     """
-    Manage client environment variables.
-
-    GET /api/v1/core/environment-variables/
-    POST /api/v1/core/environment-variables/
-    PUT /api/v1/core/environment-variables/<variable_id>/
-    DELETE /api/v1/core/environment-variables/<variable_id>/
+    Filter class for ActivityLog model.
     """
-    permission_classes = [IsValidClient]
 
-    def get(self, request: Request, variable_id: str = None) -> Response:
-        """
-        Get environment variables for the authenticated client.
-        """
-        try:
-            client = request.user
-            if not isinstance(client, Client):
-                return Response({
-                    'error': 'Authentication error',
-                    'message': 'Invalid client authentication',
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_401_UNAUTHORIZED)
+    # Date range filters
+    created_after = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='gte')
+    created_before = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='lte')
+    date_range = django_filters.CharFilter(method='filter_date_range')
 
-            if variable_id:
-                # Get specific variable
-                variable = get_object_or_404(
-                    ClientEnvironmentVariable,
-                    id=variable_id,
-                    client=client
-                )
+    # Activity type filters
+    activity_types = django_filters.CharFilter(method='filter_activity_types')
+    exclude_activity_types = django_filters.CharFilter(method='filter_exclude_activity_types')
 
-                return Response({
-                    'success': True,
-                    'data': {
-                        'id': str(variable.id),
-                        'variable_type': variable.variable_type,
-                        'custom_name': variable.custom_name,
-                        'description': variable.description,
-                        'is_active': variable.is_active,
-                        'created_at': variable.created_at,
-                        'updated_at': variable.updated_at,
-                        # Never return the actual value for security
-                        'has_value': bool(variable.encrypted_value)
-                    },
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_200_OK)
-            else:
-                # Get all variables for client
-                variables = ClientEnvironmentVariable.objects.filter(
-                    client=client
-                ).order_by('-created_at')
+    # Level filters
+    levels = django_filters.CharFilter(method='filter_levels')
+    min_level = django_filters.CharFilter(method='filter_min_level')
 
-                # Apply filters
-                variable_type = request.query_params.get('type')
-                if variable_type:
-                    variables = variables.filter(variable_type=variable_type)
+    # Client and user filters
+    client_name = django_filters.CharFilter(field_name='client__name', lookup_expr='icontains')
+    username = django_filters.CharFilter(field_name='user__username', lookup_expr='icontains')
 
-                is_active = request.query_params.get('active')
-                if is_active is not None:
-                    variables = variables.filter(is_active=is_active.lower() == 'true')
+    # Duration filters
+    min_duration = django_filters.NumberFilter(field_name='duration_ms', lookup_expr='gte')
+    max_duration = django_filters.NumberFilter(field_name='duration_ms', lookup_expr='lte')
 
-                # Pagination
-                page_size = min(int(request.query_params.get('page_size', 20)), 100)
-                page = int(request.query_params.get('page', 1))
-                start = (page - 1) * page_size
-                end = start + page_size
+    # Error filters
+    has_error = django_filters.BooleanFilter(method='filter_has_error')
 
-                paginated_variables = variables[start:end]
-                total_count = variables.count()
+    class Meta:
+        model = ActivityLog
+        fields = [
+            'activity_type', 'level', 'client', 'user', 'ip_address',
+            'created_after', 'created_before', 'date_range',
+            'activity_types', 'exclude_activity_types',
+            'levels', 'min_level',
+            'client_name', 'username',
+            'min_duration', 'max_duration',
+            'has_error'
+        ]
 
-                variable_data = []
-                for variable in paginated_variables:
-                    variable_data.append({
-                        'id': str(variable.id),
-                        'variable_type': variable.variable_type,
-                        'custom_name': variable.custom_name,
-                        'description': variable.description,
-                        'is_active': variable.is_active,
-                        'created_at': variable.created_at,
-                        'updated_at': variable.updated_at,
-                        'has_value': bool(variable.encrypted_value)
-                    })
+    def filter_date_range(self, queryset, name, value):
+        """Filter by predefined date ranges."""
+        now = timezone.now()
 
-                return Response({
-                    'success': True,
-                    'data': {
-                        'variables': variable_data,
-                        'pagination': {
-                            'page': page,
-                            'page_size': page_size,
-                            'total_count': total_count,
-                            'total_pages': (total_count + page_size - 1) // page_size
-                        }
-                    },
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_200_OK)
+        if value == 'today':
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            return queryset.filter(created_at__gte=start)
+        elif value == 'yesterday':
+            yesterday = now - timedelta(days=1)
+            start = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            return queryset.filter(created_at__gte=start, created_at__lt=end)
+        elif value == 'last_24h':
+            start = now - timedelta(hours=24)
+            return queryset.filter(created_at__gte=start)
+        elif value == 'last_7d':
+            start = now - timedelta(days=7)
+            return queryset.filter(created_at__gte=start)
+        elif value == 'last_30d':
+            start = now - timedelta(days=30)
+            return queryset.filter(created_at__gte=start)
 
-        except Exception as e:
-            logger.error(f"Error getting environment variables: {e}")
-            return Response({
-                'error': 'Query failed',
-                'message': 'Failed to retrieve environment variables',
-                'timestamp': timezone.now()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return queryset
 
-    def post(self, request: Request) -> Response:
-        """
-        Create a new environment variable.
-        """
-        try:
-            client = request.user
-            if not isinstance(client, Client):
-                return Response({
-                    'error': 'Authentication error',
-                    'message': 'Invalid client authentication',
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_401_UNAUTHORIZED)
+    def filter_activity_types(self, queryset, name, value):
+        """Filter by multiple activity types (comma-separated)."""
+        types = [t.strip() for t in value.split(',') if t.strip()]
+        if types:
+            return queryset.filter(activity_type__in=types)
+        return queryset
 
-            data = request.data
+    def filter_exclude_activity_types(self, queryset, name, value):
+        """Exclude multiple activity types (comma-separated)."""
+        types = [t.strip() for t in value.split(',') if t.strip()]
+        if types:
+            return queryset.exclude(activity_type__in=types)
+        return queryset
 
-            # Validate required fields
-            required_fields = ['variable_type', 'variable_value']
-            missing_fields = []
-            for field in required_fields:
-                if field not in data or not data[field]:
-                    missing_fields.append(field)
+    def filter_levels(self, queryset, name, value):
+        """Filter by multiple levels (comma-separated)."""
+        levels = [l.strip() for l in value.split(',') if l.strip()]
+        if levels:
+            return queryset.filter(level__in=levels)
+        return queryset
 
-            if missing_fields:
-                return Response({
-                    'error': 'Missing required fields',
-                    'missing_fields': missing_fields,
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_400_BAD_REQUEST)
+    def filter_min_level(self, queryset, name, value):
+        """Filter by minimum log level."""
+        level_order = {'DEBUG': 0, 'INFO': 1, 'WARNING': 2, 'ERROR': 3, 'CRITICAL': 4}
+        min_order = level_order.get(value.upper())
 
-            # Validate variable type
-            valid_types = [choice[0] for choice in ClientEnvironmentVariable.ENV_VARIABLE_TYPES]
-            if data['variable_type'] not in valid_types:
-                return Response({
-                    'error': 'Invalid variable type',
-                    'message': f"Variable type must be one of: {', '.join(valid_types)}",
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_400_BAD_REQUEST)
+        if min_order is not None:
+            allowed_levels = [level for level, order in level_order.items() if order >= min_order]
+            return queryset.filter(level__in=allowed_levels)
 
-            # Check for existing active variable of same type
-            existing_var = ClientEnvironmentVariable.objects.filter(
-                client=client,
-                variable_type=data['variable_type'],
-                custom_name=data.get('custom_name', ''),
-                is_active=True
-            ).first()
+        return queryset
 
-            if existing_var:
-                return Response({
-                    'error': 'Variable already exists',
-                    'message': f"An active variable of type '{data['variable_type']}' already exists. Delete the existing one first or update it.",
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_409_CONFLICT)
-
-            # Create new variable
-            variable = ClientEnvironmentVariable(
-                client=client,
-                variable_type=data['variable_type'],
-                custom_name=data.get('custom_name', ''),
-                description=data.get('description', ''),
-                is_active=True
-            )
-
-            # Set encrypted value
-            variable.set_encrypted_value(data['variable_value'])
-            variable.save()
-
-            # Send notification
-            try:
-                notify_credentials_updated(client, f"Environment Variable ({data['variable_type']})")
-            except Exception as e:
-                logger.warning(f"Failed to send notification: {e}")
-
-            logger.info(f"Environment variable created for client {client.name}: {variable.id}")
-
-            return Response({
-                'success': True,
-                'message': 'Environment variable created successfully',
-                'data': {
-                    'id': str(variable.id),
-                    'variable_type': variable.variable_type,
-                    'custom_name': variable.custom_name,
-                    'description': variable.description,
-                    'is_active': variable.is_active,
-                    'created_at': variable.created_at,
-                    'updated_at': variable.updated_at
-                },
-                'timestamp': timezone.now()
-            }, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            logger.error(f"Error creating environment variable: {e}")
-            return Response({
-                'error': 'Creation failed',
-                'message': 'Failed to create environment variable',
-                'timestamp': timezone.now()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def put(self, request: Request, variable_id: str) -> Response:
-        """
-        Update an environment variable.
-        """
-        try:
-            client = request.user
-            if not isinstance(client, Client):
-                return Response({
-                    'error': 'Authentication error',
-                    'message': 'Invalid client authentication',
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_401_UNAUTHORIZED)
-
-            # Get the variable
-            variable = get_object_or_404(
-                ClientEnvironmentVariable,
-                id=variable_id,
-                client=client
-            )
-
-            data = request.data
-
-            # Update fields
-            if 'description' in data:
-                variable.description = data['description']
-
-            if 'custom_name' in data:
-                variable.custom_name = data['custom_name']
-
-            if 'variable_value' in data:
-                variable.set_encrypted_value(data['variable_value'])
-
-            if 'is_active' in data:
-                variable.is_active = bool(data['is_active'])
-
-            variable.save()
-
-            # Send notification
-            try:
-                notify_credentials_updated(client, f"Environment Variable ({variable.variable_type})")
-            except Exception as e:
-                logger.warning(f"Failed to send notification: {e}")
-
-            logger.info(f"Environment variable updated for client {client.name}: {variable.id}")
-
-            return Response({
-                'success': True,
-                'message': 'Environment variable updated successfully',
-                'data': {
-                    'id': str(variable.id),
-                    'variable_type': variable.variable_type,
-                    'custom_name': variable.custom_name,
-                    'description': variable.description,
-                    'is_active': variable.is_active,
-                    'created_at': variable.created_at,
-                    'updated_at': variable.updated_at
-                },
-                'timestamp': timezone.now()
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"Error updating environment variable: {e}")
-            return Response({
-                'error': 'Update failed',
-                'message': 'Failed to update environment variable',
-                'timestamp': timezone.now()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def delete(self, request: Request, variable_id: str) -> Response:
-        """
-        Delete an environment variable.
-        """
-        try:
-            client = request.user
-            if not isinstance(client, Client):
-                return Response({
-                    'error': 'Authentication error',
-                    'message': 'Invalid client authentication',
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_401_UNAUTHORIZED)
-
-            # Get the variable
-            variable = get_object_or_404(
-                ClientEnvironmentVariable,
-                id=variable_id,
-                client=client
-            )
-
-            variable_type = variable.variable_type
-            variable.delete()
-
-            # Send notification
-            try:
-                send_notification(
-                    client=client,
-                    notification_type='ENVIRONMENT_VARIABLE_UPDATED',
-                    title='Environment Variable Deleted',
-                    message=f'Environment variable of type "{variable_type}" has been deleted.',
-                    metadata={'variable_type': variable_type, 'action': 'deleted'}
-                )
-            except Exception as e:
-                logger.warning(f"Failed to send notification: {e}")
-
-            logger.info(f"Environment variable deleted for client {client.name}: {variable_id}")
-
-            return Response({
-                'success': True,
-                'message': 'Environment variable deleted successfully',
-                'timestamp': timezone.now()
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"Error deleting environment variable: {e}")
-            return Response({
-                'error': 'Deletion failed',
-                'message': 'Failed to delete environment variable',
-                'timestamp': timezone.now()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    def filter_has_error(self, queryset, name, value):
+        """Filter logs that have error messages."""
+        if value:
+            return queryset.exclude(error_message='')
+        else:
+            return queryset.filter(error_message='')
 
 
-class NotificationView(APIView):
+class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    Manage client notifications.
+    Read-only ViewSet for ActivityLog model.
 
-    GET /api/v1/core/notifications/
-    PUT /api/v1/core/notifications/<notification_id>/read/
-    DELETE /api/v1/core/notifications/<notification_id>/
+    Provides list and retrieve actions with comprehensive filtering,
+    searching, and ordering capabilities.
     """
-    permission_classes = [IsValidClient]
 
-    def get(self, request: Request, notification_id: str = None) -> Response:
+    queryset = ActivityLog.objects.all()
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ActivityLogFilter
+    search_fields = [
+        'description', 'error_message', 'activity_type',
+        'client__name', 'user__username', 'ip_address'
+    ]
+    ordering_fields = [
+        'created_at', 'activity_type', 'level', 'duration_ms'
+    ]
+    ordering = ['-created_at']  # Default ordering
+
+    def get_serializer_class(self):
         """
-        Get notifications for the authenticated client.
+        Return appropriate serializer based on action.
+        Use simplified serializer for list view for better performance.
         """
-        try:
-            client = request.user
-            if not isinstance(client, Client):
-                return Response({
-                    'error': 'Authentication error',
-                    'message': 'Invalid client authentication',
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_401_UNAUTHORIZED)
+        if self.action == 'list':
+            return ActivityLogListSerializer
+        return ActivityLogSerializer
 
-            if notification_id:
-                # Get specific notification
-                notification = get_object_or_404(
-                    Notification,
-                    id=notification_id,
-                    client=client
-                )
-
-                return Response({
-                    'success': True,
-                    'data': {
-                        'id': str(notification.id),
-                        'notification_type': notification.notification_type,
-                        'title': notification.title,
-                        'message': notification.message,
-                        'status': notification.status,
-                        'channels_sent': notification.channels_sent,
-                        'reference_id': notification.reference_id,
-                        'metadata': notification.metadata,
-                        'is_read': notification.is_read,
-                        'read_at': notification.read_at,
-                        'created_at': notification.created_at,
-                        'email_sent': notification.email_sent,
-                        'whatsapp_sent': notification.whatsapp_sent,
-                        'error_message': notification.error_message
-                    },
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_200_OK)
-            else:
-                # Get all notifications for client
-                notifications = Notification.objects.filter(
-                    client=client
-                ).order_by('-created_at')
-
-                # Apply filters
-                notification_type = request.query_params.get('type')
-                if notification_type:
-                    notifications = notifications.filter(notification_type=notification_type)
-
-                is_read = request.query_params.get('read')
-                if is_read is not None:
-                    notifications = notifications.filter(is_read=is_read.lower() == 'true')
-
-                status_filter = request.query_params.get('status')
-                if status_filter:
-                    notifications = notifications.filter(status=status_filter.upper())
-
-                # Pagination
-                page_size = min(int(request.query_params.get('page_size', 20)), 100)
-                page = int(request.query_params.get('page', 1))
-                start = (page - 1) * page_size
-                end = start + page_size
-
-                paginated_notifications = notifications[start:end]
-                total_count = notifications.count()
-                unread_count = Notification.objects.get_unread_count(client)
-
-                notification_data = []
-                for notification in paginated_notifications:
-                    notification_data.append({
-                        'id': str(notification.id),
-                        'notification_type': notification.notification_type,
-                        'title': notification.title,
-                        'message': notification.message,
-                        'status': notification.status,
-                        'channels_sent': notification.channels_sent,
-                        'reference_id': notification.reference_id,
-                        'is_read': notification.is_read,
-                        'read_at': notification.read_at,
-                        'created_at': notification.created_at,
-                        'email_sent': notification.email_sent,
-                        'whatsapp_sent': notification.whatsapp_sent
-                    })
-
-                return Response({
-                    'success': True,
-                    'data': {
-                        'notifications': notification_data,
-                        'unread_count': unread_count,
-                        'pagination': {
-                            'page': page,
-                            'page_size': page_size,
-                            'total_count': total_count,
-                            'total_pages': (total_count + page_size - 1) // page_size
-                        }
-                    },
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"Error getting notifications: {e}")
-            return Response({
-                'error': 'Query failed',
-                'message': 'Failed to retrieve notifications',
-                'timestamp': timezone.now()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def put(self, request: Request, notification_id: str, action: str = None) -> Response:
+    def get_queryset(self):
         """
-        Update notification (mark as read).
+        Optimize queryset with select_related for better performance.
         """
-        try:
-            client = request.user
-            if not isinstance(client, Client):
-                return Response({
-                    'error': 'Authentication error',
-                    'message': 'Invalid client authentication',
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_401_UNAUTHORIZED)
+        queryset = super().get_queryset()
 
-            notification = get_object_or_404(
-                Notification,
-                id=notification_id,
-                client=client
+        # Optimize with select_related
+        queryset = queryset.select_related('client', 'user')
+
+        # Filter by client if user has limited access
+        user = self.request.user
+        if hasattr(user, 'client') and user.client:
+            # If user is associated with a specific client, filter logs
+            queryset = queryset.filter(client=user.client)
+
+        return queryset
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """
+        Get activity log statistics.
+
+        Returns comprehensive statistics about activity logs including:
+        - Total counts
+        - Recent activity counts
+        - Top activity types
+        - Activity distribution by level
+        - Hourly distribution
+        """
+        now = timezone.now()
+        last_24h = now - timedelta(hours=24)
+        last_7d = now - timedelta(days=7)
+
+        # Get base queryset (filtered by client if applicable)
+        base_queryset = self.get_queryset()
+
+        # Basic counts
+        total_logs = base_queryset.count()
+        logs_last_24h = base_queryset.filter(created_at__gte=last_24h).count()
+        logs_last_7d = base_queryset.filter(created_at__gte=last_7d).count()
+
+        # Error and warning counts
+        recent_logs = base_queryset.filter(created_at__gte=last_24h)
+        error_logs_last_24h = recent_logs.filter(level__in=['ERROR', 'CRITICAL']).count()
+        warning_logs_last_24h = recent_logs.filter(level='WARNING').count()
+
+        # Payment activity count
+        payment_activities_last_24h = recent_logs.filter(
+            activity_type__startswith='PAYMENT'
+        ).count()
+
+        # Top activity types (last 24h)
+        top_activity_types = list(
+            recent_logs.values('activity_type')
+            .annotate(count=Count('activity_type'))
+            .order_by('-count')[:10]
+        )
+
+        # Top clients (last 24h)
+        top_clients = list(
+            recent_logs.filter(client__isnull=False)
+            .values('client__name', 'client__client_id')
+            .annotate(count=Count('client'))
+            .order_by('-count')[:10]
+        )
+
+        # Activity by level
+        activity_by_level = dict(
+            recent_logs.values('level')
+            .annotate(count=Count('level'))
+            .values_list('level', 'count')
+        )
+
+        # Hourly distribution (last 24 hours)
+        hourly_data = []
+        for i in range(24):
+            hour_start = last_24h + timedelta(hours=i)
+            hour_end = hour_start + timedelta(hours=1)
+            hour_count = base_queryset.filter(
+                created_at__gte=hour_start,
+                created_at__lt=hour_end
+            ).count()
+
+            hourly_data.append({
+                'hour': hour_start.strftime('%H:00'),
+                'timestamp': hour_start.isoformat(),
+                'count': hour_count
+            })
+
+        stats_data = {
+            'total_logs': total_logs,
+            'logs_last_24h': logs_last_24h,
+            'logs_last_7d': logs_last_7d,
+            'error_logs_last_24h': error_logs_last_24h,
+            'warning_logs_last_24h': warning_logs_last_24h,
+            'payment_activities_last_24h': payment_activities_last_24h,
+            'top_activity_types': top_activity_types,
+            'top_clients': top_clients,
+            'activity_by_level': activity_by_level,
+            'hourly_distribution': hourly_data
+        }
+
+        serializer = ActivityLogStatsSerializer(stats_data)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def export(self, request):
+        """
+        Export activity logs as CSV.
+        Applies current filters and returns CSV data.
+        """
+        import csv
+        import io
+        from django.http import HttpResponse
+
+        # Get filtered queryset
+        queryset = self.filter_queryset(self.get_queryset())
+
+        # Limit export size to prevent memory issues
+        max_export_size = 10000
+        if queryset.count() > max_export_size:
+            return Response(
+                {'error': f'Export size limited to {max_export_size} records. Please apply filters to reduce the dataset.'},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-            if action == 'read':
-                notification.mark_as_read()
-                message = 'Notification marked as read'
-            else:
-                return Response({
-                    'error': 'Invalid action',
-                    'message': 'Supported actions: read',
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_400_BAD_REQUEST)
+        # Create CSV response
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="activity_logs_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
 
-            return Response({
-                'success': True,
-                'message': message,
-                'data': {
-                    'id': str(notification.id),
-                    'is_read': notification.is_read,
-                    'read_at': notification.read_at
-                },
-                'timestamp': timezone.now()
-            }, status=status.HTTP_200_OK)
+        writer = csv.writer(response)
 
-        except Exception as e:
-            logger.error(f"Error updating notification: {e}")
-            return Response({
-                'error': 'Update failed',
-                'message': 'Failed to update notification',
-                'timestamp': timezone.now()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Write header
+        writer.writerow([
+            'Log ID', 'Activity Type', 'Description', 'Level', 'Client', 'User',
+            'IP Address', 'Duration (ms)', 'Error Message', 'Created At'
+        ])
 
-    def delete(self, request: Request, notification_id: str) -> Response:
-        """
-        Delete a notification.
-        """
-        try:
-            client = request.user
-            if not isinstance(client, Client):
-                return Response({
-                    'error': 'Authentication error',
-                    'message': 'Invalid client authentication',
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_401_UNAUTHORIZED)
+        # Write data
+        for log in queryset.select_related('client', 'user'):
+            writer.writerow([
+                str(log.log_id),
+                log.activity_type,
+                log.description,
+                log.level,
+                log.client.name if log.client else '',
+                log.user.username if log.user else '',
+                log.ip_address or '',
+                log.duration_ms or '',
+                log.error_message or '',
+                log.created_at.isoformat()
+            ])
 
-            notification = get_object_or_404(
-                Notification,
-                id=notification_id,
-                client=client
-            )
+        return response
 
-            notification.delete()
 
-            return Response({
-                'success': True,
-                'message': 'Notification deleted successfully',
-                'timestamp': timezone.now()
-            }, status=status.HTTP_200_OK)
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only ViewSet for Notification model.
+    """
 
-        except Exception as e:
-            logger.error(f"Error deleting notification: {e}")
-            return Response({
-                'error': 'Deletion failed',
-                'message': 'Failed to delete notification',
-                'timestamp': timezone.now()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    queryset = Notification.objects.all()
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = [
+        'notification_type', 'status', 'is_read', 'email_sent', 'whatsapp_sent'
+    ]
+    search_fields = ['title', 'message', 'client__name']
+    ordering_fields = ['created_at', 'updated_at']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        """Filter by client if user has limited access."""
+        queryset = super().get_queryset()
+        queryset = queryset.select_related('client')
+
+        user = self.request.user
+        if hasattr(user, 'client') and user.client:
+            queryset = queryset.filter(client=user.client)
+
+        return queryset
+
+
+class ClientEnvironmentVariableViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only ViewSet for ClientEnvironmentVariable model.
+    Note: Encrypted values are not exposed for security.
+    """
+
+    queryset = ClientEnvironmentVariable.objects.all()
+    serializer_class = ClientEnvironmentVariableSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['variable_type', 'is_active']
+    search_fields = ['client__name', 'variable_type', 'custom_name', 'description']
+    ordering_fields = ['created_at', 'updated_at']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        """Filter by client if user has limited access."""
+        queryset = super().get_queryset()
+        queryset = queryset.select_related('client')
+
+        user = self.request.user
+        if hasattr(user, 'client') and user.client:
+            queryset = queryset.filter(client=user.client)
+
+        return queryset
+
 
 @api_view(['GET'])
 @permission_classes([AllowAny])

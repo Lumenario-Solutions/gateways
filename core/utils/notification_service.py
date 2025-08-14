@@ -331,11 +331,11 @@ def send_notification(client, notification_type, title, message,
                     whatsapp_message = create_whatsapp_message(notification_type, template_data)
 
                     # Use client-specific message function
-                    whatsapp_result = send_message_with_client_settings(
+                    whatsapp_result = send_message(
                         to=client.phone_number if hasattr(client, 'phone_number') else '',
                         conversation=whatsapp_message,
+                        client=client,
                         api_url=api_url,
-                        api_key=api_key
                     )
 
                     if whatsapp_result.get('success'):
@@ -442,59 +442,6 @@ def send_email_with_client_settings(to, subject, content, api_key, from_email=No
             "success": False,
             "error": str(e)
         }
-
-
-def send_message_with_client_settings(to, conversation, api_url, api_key):
-    """
-    Send message using client-specific API settings.
-    """
-    import requests
-    import json
-
-    # Prepare payload
-    payload = {
-        "to": to,
-        "conversation": conversation
-    }
-
-    # Prepare headers
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    try:
-        response = requests.post(
-            api_url,
-            json=payload,
-            headers=headers,
-            timeout=30
-        )
-
-        try:
-            api_response_data = response.json()
-        except json.JSONDecodeError:
-            api_response_data = {"raw_response": response.text}
-
-        if response.status_code >= 200 and response.status_code < 300:
-            return {
-                "success": True,
-                "message": "Message sent successfully",
-                "data": api_response_data
-            }
-        else:
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
-                "data": api_response_data
-            }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
 
 # Convenience functions for common notification types
 def notify_client_created(client):
