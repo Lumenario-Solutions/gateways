@@ -699,17 +699,114 @@ class MPesaCredentialsView(APIView):
     """
     Manage MPesa credentials for a client.
 
+    GET /api/v1/mpesa/credentials/
     POST /api/v1/mpesa/credentials/
+    PUT /api/v1/mpesa/credentials/<credential_id>/
+    DELETE /api/v1/mpesa/credentials/<credential_id>/
     """
     permission_classes = [IsValidClient]
 
+    def get(self, request: Request, credential_id: str = None) -> Response:
+        """
+        Get MPesa credentials for the authenticated client.
+        """
+        try:
+            client = request.user
+            if not isinstance(client, Client):
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
+            if credential_id:
+                # Get specific credential
+                credential = get_object_or_404(
+                    MpesaCredentials,
+                    id=credential_id,
+                    client=client
+                )
+
+                return Response({
+                    'success': True,
+                    'data': {
+                        'credential_id': str(credential.id),
+                        'name': credential.name,
+                        'environment': credential.environment,
+                        'business_shortcode': credential.business_shortcode,
+                        'initiator_name': credential.initiator_name,
+                        'base_url': credential.base_url,
+                        'is_active': credential.is_active,
+                        'created_at': credential.created_at,
+                        'updated_at': credential.updated_at,
+                        # Never return encrypted values
+                        'has_credentials': all([
+                            credential.consumer_key,
+                            credential.consumer_secret,
+                            credential.passkey,
+                            credential.security_credential
+                        ])
+                    },
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_200_OK)
+            else:
+                # Get all credentials for client
+                credentials = MpesaCredentials.objects.filter(
+                    client=client
+                ).order_by('-created_at')
+
+                # Apply filters
+                environment = request.query_params.get('environment')
+                if environment:
+                    credentials = credentials.filter(environment=environment)
+
+                is_active = request.query_params.get('active')
+                if is_active is not None:
+                    credentials = credentials.filter(is_active=is_active.lower() == 'true')
+
+                credential_data = []
+                for credential in credentials:
+                    credential_data.append({
+                        'credential_id': str(credential.id),
+                        'name': credential.name,
+                        'environment': credential.environment,
+                        'business_shortcode': credential.business_shortcode,
+                        'initiator_name': credential.initiator_name,
+                        'base_url': credential.base_url,
+                        'is_active': credential.is_active,
+                        'created_at': credential.created_at,
+                        'updated_at': credential.updated_at,
+                        'has_credentials': all([
+                            credential.consumer_key,
+                            credential.consumer_secret,
+                            credential.passkey,
+                            credential.security_credential
+                        ])
+                    })
+
+                return Response({
+                    'success': True,
+                    'data': {
+                        'credentials': credential_data,
+                        'total_count': len(credential_data)
+                    },
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error getting MPesa credentials: {e}")
+            return Response({
+                'error': 'Query failed',
+                'message': 'Failed to retrieve MPesa credentials',
+                'timestamp': timezone.now()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def post(self, request: Request) -> Response:
         """
-        Create or update MPesa credentials for a client.
+        Create MPesa credentials for the authenticated client.
 
         Expected payload:
         {
-            "client_id": "uuid-string",
             "name": "My MPesa Credentials",
             "environment": "sandbox" or "live",
             "consumer_key": "your-consumer-key",
@@ -721,12 +818,19 @@ class MPesaCredentialsView(APIView):
         }
         """
         try:
-            # Extract data from request
+            client = request.user
+            if not isinstance(client, Client):
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
             data = request.data
 
-            # Validate required fields
+            # Validate required fields (client_id no longer needed)
             required_fields = [
-                'client_id', 'name', 'environment', 'consumer_key',
+                'name', 'environment', 'consumer_key',
                 'consumer_secret', 'business_shortcode', 'passkey',
                 'initiator_name', 'security_credential'
             ]
@@ -742,16 +846,6 @@ class MPesaCredentialsView(APIView):
                     'missing_fields': missing_fields,
                     'timestamp': timezone.now()
                 }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Validate client exists
-            try:
-                client = Client.objects.get(client_id=data['client_id'])
-            except Client.DoesNotExist:
-                return Response({
-                    'error': 'Client not found',
-                    'message': f"Client with ID {data['client_id']} does not exist",
-                    'timestamp': timezone.now()
-                }, status=status.HTTP_404_NOT_FOUND)
 
             # Validate environment
             environment = data['environment'].lower()
@@ -770,21 +864,21 @@ class MPesaCredentialsView(APIView):
             ).first()
 
             if existing_credentials:
-                # Update existing credentials
-                credentials = existing_credentials
-                credentials.name = data['name']
-                credentials.business_shortcode = data['business_shortcode']
-                credentials.initiator_name = data['initiator_name']
-            else:
-                # Create new credentials
-                credentials = MpesaCredentials(
-                    client=client,
-                    name=data['name'],
-                    environment=environment,
-                    business_shortcode=data['business_shortcode'],
-                    initiator_name=data['initiator_name'],
-                    is_active=True
-                )
+                return Response({
+                    'error': 'Credentials already exist',
+                    'message': f"Active MPesa credentials for '{environment}' environment already exist. Use PUT to update or DELETE to remove first.",
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_409_CONFLICT)
+
+            # Create new credentials
+            credentials = MpesaCredentials(
+                client=client,
+                name=data['name'],
+                environment=environment,
+                business_shortcode=data['business_shortcode'],
+                initiator_name=data['initiator_name'],
+                is_active=True
+            )
 
             # Set encrypted credentials using the model's method
             credentials.set_credentials(
@@ -797,29 +891,169 @@ class MPesaCredentialsView(APIView):
             # Save the credentials (this will also set the base_url)
             credentials.save()
 
-            logger.info(f"MPesa credentials {'updated' if existing_credentials else 'created'} for client {client.client_id}")
+            # Send notification
+            try:
+                from core.utils.notification_service import notify_credentials_updated
+                notify_credentials_updated(client, f"MPesa Credentials ({environment})")
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+
+            logger.info(f"MPesa credentials created for client {client.client_id}")
 
             return Response({
                 'success': True,
-                'message': f"MPesa credentials {'updated' if existing_credentials else 'created'} successfully",
+                'message': 'MPesa credentials created successfully',
                 'data': {
                     'credential_id': str(credentials.id),
-                    'client_id': str(client.client_id),
                     'name': credentials.name,
                     'environment': credentials.environment,
                     'business_shortcode': credentials.business_shortcode,
+                    'initiator_name': credentials.initiator_name,
                     'base_url': credentials.base_url,
                     'is_active': credentials.is_active,
                     'created_at': credentials.created_at,
                     'updated_at': credentials.updated_at
                 },
                 'timestamp': timezone.now()
-            }, status=status.HTTP_201_CREATED if not existing_credentials else status.HTTP_200_OK)
+            }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
-            logger.error(f"Error managing MPesa credentials: {e}")
+            logger.error(f"Error creating MPesa credentials: {e}")
             return Response({
-                'error': 'Failed to manage credentials',
-                'message': 'An error occurred while processing MPesa credentials',
+                'error': 'Creation failed',
+                'message': 'An error occurred while creating MPesa credentials',
+                'timestamp': timezone.now()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def put(self, request: Request, credential_id: str) -> Response:
+        """
+        Update MPesa credentials for the authenticated client.
+        """
+        try:
+            client = request.user
+            if not isinstance(client, Client):
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
+            # Get the credential
+            credential = get_object_or_404(
+                MpesaCredentials,
+                id=credential_id,
+                client=client
+            )
+
+            data = request.data
+
+            # Update fields if provided
+            if 'name' in data:
+                credential.name = data['name']
+
+            if 'business_shortcode' in data:
+                credential.business_shortcode = data['business_shortcode']
+
+            if 'initiator_name' in data:
+                credential.initiator_name = data['initiator_name']
+
+            if 'is_active' in data:
+                credential.is_active = bool(data['is_active'])
+
+            # Update encrypted credentials if provided
+            credential_fields = ['consumer_key', 'consumer_secret', 'passkey', 'security_credential']
+            if any(field in data for field in credential_fields):
+                credential.set_credentials(
+                    consumer_key=data.get('consumer_key', credential.get_decrypted_credentials().get('consumer_key', '')),
+                    consumer_secret=data.get('consumer_secret', credential.get_decrypted_credentials().get('consumer_secret', '')),
+                    passkey=data.get('passkey', credential.get_decrypted_credentials().get('passkey', '')),
+                    security_credential=data.get('security_credential', credential.get_decrypted_credentials().get('security_credential', ''))
+                )
+
+            credential.save()
+
+            # Send notification
+            try:
+                from core.utils.notification_service import notify_credentials_updated
+                notify_credentials_updated(client, f"MPesa Credentials ({credential.environment})")
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+
+            logger.info(f"MPesa credentials updated for client {client.name}: {credential.id}")
+
+            return Response({
+                'success': True,
+                'message': 'MPesa credentials updated successfully',
+                'data': {
+                    'credential_id': str(credential.id),
+                    'name': credential.name,
+                    'environment': credential.environment,
+                    'business_shortcode': credential.business_shortcode,
+                    'initiator_name': credential.initiator_name,
+                    'base_url': credential.base_url,
+                    'is_active': credential.is_active,
+                    'created_at': credential.created_at,
+                    'updated_at': credential.updated_at
+                },
+                'timestamp': timezone.now()
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error updating MPesa credentials: {e}")
+            return Response({
+                'error': 'Update failed',
+                'message': 'Failed to update MPesa credentials',
+                'timestamp': timezone.now()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request: Request, credential_id: str) -> Response:
+        """
+        Delete MPesa credentials for the authenticated client.
+        """
+        try:
+            client = request.user
+            if not isinstance(client, Client):
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
+            # Get the credential
+            credential = get_object_or_404(
+                MpesaCredentials,
+                id=credential_id,
+                client=client
+            )
+
+            environment = credential.environment
+            credential.delete()
+
+            # Send notification
+            try:
+                from core.utils.notification_service import send_notification
+                send_notification(
+                    client=client,
+                    notification_type='MPESA_CREDENTIALS_UPDATED',
+                    title='MPesa Credentials Deleted',
+                    message=f'MPesa credentials for "{environment}" environment have been deleted.',
+                    metadata={'environment': environment, 'action': 'deleted'}
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+
+            logger.info(f"MPesa credentials deleted for client {client.name}: {credential_id}")
+
+            return Response({
+                'success': True,
+                'message': 'MPesa credentials deleted successfully',
+                'timestamp': timezone.now()
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error deleting MPesa credentials: {e}")
+            return Response({
+                'error': 'Deletion failed',
+                'message': 'Failed to delete MPesa credentials',
                 'timestamp': timezone.now()
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

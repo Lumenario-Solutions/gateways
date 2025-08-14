@@ -75,6 +75,13 @@ class ClientRegistrationView(APIView):
             # Create default configuration
             ClientConfiguration.objects.create(client=client)
 
+            # Send welcome notification
+            try:
+                from core.utils.notification_service import notify_client_created
+                notify_client_created(client)
+            except Exception as e:
+                logger.warning(f"Failed to send welcome notification: {e}")
+
             # Prepare response
             response_data = {
                 'client': ClientResponseSerializer(client).data,

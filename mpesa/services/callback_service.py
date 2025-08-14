@@ -358,14 +358,21 @@ class CallbackService:
     def _send_notifications(self, transaction):
         """Send notifications for transaction updates."""
         try:
-            # This can be enhanced to send:
-            # 1. Webhooks to client
-            # 2. Email notifications
-            # 3. SMS notifications
-            # 4. Push notifications
-
+            # Send webhook notification
             if transaction.client and transaction.client.webhook_url:
                 self._send_webhook_notification(transaction)
+
+            # Send email and WhatsApp notifications based on transaction status
+            if transaction.client:
+                try:
+                    if transaction.is_successful():
+                        from core.utils.notification_service import notify_payment_received
+                        notify_payment_received(transaction.client, transaction)
+                    elif transaction.is_failed():
+                        from core.utils.notification_service import notify_payment_failed
+                        notify_payment_failed(transaction.client, transaction)
+                except Exception as e:
+                    logger.warning(f"Failed to send email/WhatsApp notifications: {e}")
 
         except Exception as e:
             logger.error(f"Error sending notifications for {transaction.transaction_id}: {e}")

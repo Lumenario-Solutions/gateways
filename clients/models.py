@@ -81,6 +81,12 @@ class Client(models.Model):
         unique=True,
         help_text="Client contact email"
     )
+    phone_number = models.CharField(
+    max_length=20,
+    default="254759104865",
+    help_text="Client phone number"
+    )
+
     description = models.TextField(
         blank=True,
         help_text="Description of the client's business"

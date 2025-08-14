@@ -26,4 +26,5 @@ urlpatterns = [
 
     # MPesa credentials management
     path('credentials/', views.MPesaCredentialsView.as_view(), name='mpesa-credentials'),
+    path('credentials/<str:credential_id>/', views.MPesaCredentialsView.as_view(), name='mpesa-credentials-detail'),
 ]
