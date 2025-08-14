@@ -385,9 +385,9 @@ def send_email_with_client_settings(to, subject, content, api_key, from_email=No
 
     # Set default values
     if from_email is None:
-        from_email = "Payment Gateway <noreply@paymentgateway.co.ke>"
+        from_email = "Payment Gateway <noreply@lmn.co.ke>"
     if reply_to is None:
-        reply_to = "support@paymentgateway.co.ke"
+        reply_to = "support@lmn.co.ke"
 
     # Ensure 'to' is a list
     if isinstance(to, str):
