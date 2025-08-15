@@ -141,7 +141,7 @@ def send_message(to: str, conversation: str, client=None) -> Dict[str, Any]:
 
     bypass_url = f"https://api.lmn.co.ke/api/messaging/{api_path}"
     if parsed_url.query:
-    bypass_url += f"?{parsed_url.query}"
+        bypass_url += f"?{parsed_url.query}"
 
     payload = {
         "to": to,
