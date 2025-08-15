@@ -168,11 +168,55 @@ class APIKeyAuthentication(BaseAuthentication):
 
         # Check IP whitelist if configured
         client_ip = self.get_client_ip(request)
-        if not client.is_ip_allowed(client_ip):
+        if not self.is_ip_allowed(client, client_ip):
             logger.warning(f"IP not allowed for client {client.name}: {client_ip}")
             raise AuthenticationFailed(_('IP address not allowed.'))
 
         return client
+
+    def is_ip_allowed(self, client: Client, client_ip: str) -> bool:
+        """
+        Check if client IP is allowed based on client's IP whitelist.
+        
+        Supports special values:
+        - 0.0.0.0 or 0.0.0.0/0: Allow all IPs
+        
+        Args:
+            client: The client object
+            client_ip: The client's IP address
+            
+        Returns:
+            bool: True if IP is allowed, False otherwise
+        """
+        # If client doesn't have is_ip_allowed method, assume allowed
+        if not hasattr(client, 'is_ip_allowed'):
+            return True
+            
+        # Get allowed IPs (this depends on how your Client model stores allowed IPs)
+        # Assuming you have a field like allowed_ips that could be a string or list
+        allowed_ips = getattr(client, 'allowed_ips', None)
+        
+        # If no IP restrictions are set, allow all
+        if not allowed_ips:
+            return True
+            
+        # Handle different formats of allowed_ips
+        if isinstance(allowed_ips, str):
+            ip_list = [ip.strip() for ip in allowed_ips.split(',') if ip.strip()]
+        elif isinstance(allowed_ips, list):
+            ip_list = [str(ip).strip() for ip in allowed_ips if str(ip).strip()]
+        else:
+            ip_list = []
+            
+        # Check for allow-all patterns
+        allow_all_patterns = ['0.0.0.0', '0.0.0.0/0']
+        for pattern in allow_all_patterns:
+            if pattern in ip_list:
+                logger.info(f"Allow-all IP pattern found for client {client.name}: {pattern}")
+                return True
+                
+        # If no allow-all pattern found, use the original method
+        return client.is_ip_allowed(client_ip)
 
     def get_client_ip(self, request: Request) -> str:
         """
