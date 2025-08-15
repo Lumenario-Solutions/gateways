@@ -13,13 +13,19 @@ def log_email_activity(activity_type, description, client=None, metadata=None, l
     """Log email-related activity to ActivityLog."""
     try:
         from core.models import ActivityLog
+        
+        # Add error_message to metadata instead of passing as separate parameter
+        if error_message and metadata:
+            metadata['error_message'] = error_message
+        elif error_message:
+            metadata = {'error_message': error_message}
+        
         ActivityLog.objects.log_activity(
             activity_type=activity_type,
             description=description,
             client=client,
             metadata=metadata or {},
-            level=level,
-            error_message=error_message
+            level=level
         )
     except Exception as e:
         logger.error(f"Failed to log email activity: {e}")
