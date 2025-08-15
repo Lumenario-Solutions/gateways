@@ -295,11 +295,14 @@ def send_notification(client, notification_type, title, message,
                     subject, html_content = create_email_template(notification_type, template_data)
 
                     # Use client-specific email function
-                    email_result = send_email_with_client_settings(
+                    email_result = send_email(
                         to=client.email,
                         subject=subject,
                         content=html_content,
-                        api_key=api_key
+                        # from_email='',
+                        # reply_to='',
+                        client=client,
+                        # api_key=api_key
                     )
 
                     if email_result.get('success'):
@@ -372,74 +375,6 @@ def send_notification(client, notification_type, title, message,
             'error': error_msg,
             'channels': {},
             'errors': [error_msg]
-        }
-
-
-def send_email_with_client_settings(to, subject, content, api_key, from_email=None, reply_to=None):
-    """
-    Send email using client-specific API key.
-    """
-    import requests
-    import json
-
-    # Set default values
-    if from_email is None:
-        from_email = "Payment Gateway <noreply@lmn.co.ke>"
-    if reply_to is None:
-        reply_to = "support@lmn.co.ke"
-
-    # Ensure 'to' is a list
-    if isinstance(to, str):
-        to = [to]
-
-    # Prepare payload for Resend API
-    payload = {
-        "from": from_email,
-        "to": to,
-        "subject": subject,
-        "html": content,
-        "reply_to": reply_to
-    }
-
-    # Prepare headers
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    # Resend API endpoint
-    api_url = "https://api.resend.com/emails"
-
-    try:
-        response = requests.post(
-            api_url,
-            json=payload,
-            headers=headers,
-            timeout=30
-        )
-
-        try:
-            api_response_data = response.json()
-        except json.JSONDecodeError:
-            api_response_data = {"raw_response": response.text}
-
-        if response.status_code >= 200 and response.status_code < 300:
-            return {
-                "success": True,
-                "message": f"Email sent successfully. ID: {api_response_data.get('id', 'unknown')}",
-                "data": api_response_data
-            }
-        else:
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
-                "data": api_response_data
-            }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
         }
 
 # Convenience functions for common notification types
