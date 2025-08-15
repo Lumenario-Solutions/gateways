@@ -7,6 +7,8 @@ import logging
 import time
 import traceback
 import urllib.parse
+from urllib.parse import urlparse
+
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +135,13 @@ def send_message(to: str, conversation: str, client=None) -> Dict[str, Any]:
         )
         return response_data
 
-    # Bypass firewall using api.lmn.co.ke
-    encoded_url = urllib.parse.quote(api_url, safe='')
-    bypass_url = f"https://api.lmn.co.ke/api/messaging?url={encoded_url}"
+    # Extract just the path from the API URL
+    parsed_url = urlparse(api_url)
+    api_path = parsed_url.path.lstrip('/')  # strip the leading slash
+
+    bypass_url = f"https://api.lmn.co.ke/api/messaging/{api_path}"
+    if parsed_url.query:
+    bypass_url += f"?{parsed_url.query}"
 
     payload = {
         "to": to,
