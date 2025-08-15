@@ -15,7 +15,7 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from rest_framework import status, permissions, viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import (
     api_view,
     permission_classes,
@@ -157,7 +157,7 @@ class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
 
     queryset = ActivityLog.objects.all()
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsValidClient]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ActivityLogFilter
     search_fields = [
@@ -341,7 +341,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = Notification.objects.all()
     serializer_class = NotificationSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsValidClient]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = [
         'notification_type', 'status', 'is_read', 'email_sent', 'whatsapp_sent'
@@ -370,7 +370,7 @@ class ClientEnvironmentVariableViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = ClientEnvironmentVariable.objects.all()
     serializer_class = ClientEnvironmentVariableSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsValidClient]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['variable_type', 'is_active']
     search_fields = ['client__name', 'variable_type', 'custom_name', 'description']

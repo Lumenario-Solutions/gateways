@@ -130,6 +130,11 @@ def send_message(to: str, conversation: str, client=None) -> Dict[str, Any]:
     if not api_key:
         api_key = getattr(settings, 'MESSAGE_API_KEY', None) or os.getenv('API_KEY')
 
+    # Log credential status for debugging
+    logger.info(f"API credentials status - Source: {api_source}, "
+                f"URL: {'✓' if api_url else '✗'} ({api_url[:50] + '...' if api_url and len(api_url) > 50 else api_url or 'None'}), "
+                f"Key: {'✓' if api_key else '✗'} ({'***' + api_key[-4:] if api_key and len(api_key) > 4 else 'None'})")
+
     if not api_url or not api_key:
         error_msg = "Missing API credentials"
         error_details = "Set MESSAGE_API_URL and MESSAGE_API_KEY in settings or API_URL and API_KEY in environment variables"
@@ -145,7 +150,9 @@ def send_message(to: str, conversation: str, client=None) -> Dict[str, Any]:
                 'reason': 'missing_api_credentials',
                 'api_source': api_source,
                 'has_url': bool(api_url),
-                'has_key': bool(api_key)
+                'has_key': bool(api_key),
+                'api_url_preview': api_url[:50] + '...' if api_url and len(api_url) > 50 else api_url,
+                'api_key_preview': '***' + api_key[-4:] if api_key and len(api_key) > 4 else None
             },
             level='ERROR',
             error_message=error_details
@@ -172,7 +179,8 @@ def send_message(to: str, conversation: str, client=None) -> Dict[str, Any]:
         "Authorization": f"Bearer {api_key}"
     }
 
-    # Log message sending attempt
+    # Log message sending attempt with credential info
+    logger.info(f"Attempting to send message to {to} using {api_source} credentials")
     log_message_activity(
         'MESSAGE_SENDING',
         f"Attempting to send message to {to}",
@@ -181,7 +189,9 @@ def send_message(to: str, conversation: str, client=None) -> Dict[str, Any]:
             'recipient': to,
             'message_length': len(conversation),
             'api_source': api_source,
-            'api_url': api_url[:50] + '...' if len(api_url) > 50 else api_url  # Truncate for security
+            'api_url_preview': api_url[:50] + '...' if len(api_url) > 50 else api_url,
+            'api_key_preview': '***' + api_key[-4:] if api_key and len(api_key) > 4 else 'None',
+            'has_credentials': bool(api_url and api_key)
         }
     )
 
@@ -294,10 +304,10 @@ def send_message(to: str, conversation: str, client=None) -> Dict[str, Any]:
 
         logger.error(f"Timeout error sending message to {to}")
 
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as e:
         duration_ms = int((time.time() - start_time) * 1000)
         response_data["duration_ms"] = duration_ms
-        error_msg = "Connection error - Unable to connect to the API endpoint"
+        error_msg = f"Connection error - Unable to connect to the API endpoint: {str(e)}"
 
         response_data.update({
             "message": "Connection error",
@@ -313,13 +323,16 @@ def send_message(to: str, conversation: str, client=None) -> Dict[str, Any]:
                 'message_length': len(conversation),
                 'duration_ms': duration_ms,
                 'reason': 'connection_error',
-                'api_url': api_url[:50] + '...' if len(api_url) > 50 else api_url
+                'api_url_preview': api_url[:50] + '...' if len(api_url) > 50 else api_url,
+                'api_key_preview': '***' + api_key[-4:] if api_key and len(api_key) > 4 else 'None',
+                'api_source': api_source,
+                'connection_error_details': str(e)
             },
             level='ERROR',
             error_message=error_msg
         )
 
-        logger.error(f"Connection error sending message to {to}")
+        logger.error(f"Connection error sending message to {to}. URL: {api_url}, Error: {str(e)}")
 
     except requests.exceptions.RequestException as e:
         duration_ms = int((time.time() - start_time) * 1000)

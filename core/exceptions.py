@@ -55,7 +55,6 @@ def custom_exception_handler(exc, context):
             custom_response_data['code'] = get_error_code_from_exception(exc)
 
         # Add timestamp
-        from django.utils import timezone
         custom_response_data['timestamp'] = timezone.now().isoformat()
 
         # Log the error

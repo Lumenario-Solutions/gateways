@@ -335,7 +335,6 @@ def send_notification(client, notification_type, title, message,
                         to=client.phone_number if hasattr(client, 'phone_number') else '',
                         conversation=whatsapp_message,
                         client=client,
-                        api_url=api_url,
                     )
 
                     if whatsapp_result.get('success'):
