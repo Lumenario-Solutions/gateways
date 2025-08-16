@@ -237,12 +237,25 @@ class STKPushService:
             if transaction.status in ['SUCCESSFUL', 'FAILED', 'CANCELLED']:
                 return self._format_transaction_status(transaction)
 
-            # Query MPesa API for latest status
-            status_response = self._query_mpesa_status(transaction)
+            # Query MPesa API for latest status if still processing and no callback received
+            if transaction.status == 'PROCESSING' and not transaction.callback_received:
+                # Check how long ago the transaction was created
+                time_since_creation = timezone.now() - transaction.created_at
 
-            if status_response:
-                # Update transaction with latest status
-                self._update_transaction_with_status_response(transaction, status_response)
+                # Only query API if transaction is more than 30 seconds old
+                if time_since_creation.total_seconds() > 30:
+                    status_response = self._query_mpesa_status(transaction)
+
+                    if status_response:
+                        # Update transaction with latest status
+                        self._update_transaction_with_status_response(transaction, status_response)
+                    else:
+                        # If query fails and it's been more than 5 minutes, mark as failed
+                        if time_since_creation.total_seconds() > 300:  # 5 minutes
+                            transaction.update_status(
+                                'FAILED',
+                                response_description='Transaction timeout - no response from MPesa'
+                            )
 
             return self._format_transaction_status(transaction)
 
@@ -403,6 +416,47 @@ class STKPushService:
         except Exception as e:
             logger.error(f"Error getting transaction summary: {e}")
             raise MPesaException(f"Failed to get transaction summary: {e}")
+
+    def check_transaction_status_actively(self, transaction_id):
+        """
+        Actively check transaction status by querying M-Pesa API.
+        This method should be called when callback is not received.
+
+        Args:
+            transaction_id (str): Transaction ID to check
+
+        Returns:
+            dict: Updated transaction status
+        """
+        try:
+            if not self.client_instance:
+                raise ValidationException("Client instance is required for transaction operations")
+
+            transaction = Transaction.objects.get(
+                transaction_id=transaction_id,
+                client=self.client_instance
+            )
+
+            # Only check if transaction is still processing
+            if transaction.status not in ['PROCESSING', 'PENDING']:
+                return self._format_transaction_status(transaction)
+
+            # Query M-Pesa API for current status
+            status_response = self._query_mpesa_status(transaction)
+
+            if status_response:
+                self._update_transaction_with_status_response(transaction, status_response)
+                logger.info(f"Transaction status updated via API query: {transaction.transaction_id}")
+            else:
+                logger.warning(f"Failed to query transaction status: {transaction.transaction_id}")
+
+            return self._format_transaction_status(transaction)
+
+        except Transaction.DoesNotExist:
+            raise ValidationException("Transaction not found")
+        except Exception as e:
+            logger.error(f"Error in active status check: {e}")
+            raise MPesaException(f"Failed to check transaction status: {e}")
 
 
 # Service instance - use lazy initialization to avoid database access during import

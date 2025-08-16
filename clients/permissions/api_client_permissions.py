@@ -18,7 +18,6 @@ class IsValidClient(BasePermission):
     """
     Permission class that ensures request.user is a valid, active Client.
 
-    This replaces Django's IsAuthenticated permission for API key authentication.
     """
 
     message = _('Valid API key authentication required.')

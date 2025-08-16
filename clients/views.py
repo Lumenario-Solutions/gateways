@@ -9,7 +9,6 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.request import Request
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -357,7 +356,7 @@ class APIKeyDetailView(APIView):
     DELETE /api/v1/clients/api-keys/<api_key>/
     PUT /api/v1/clients/api-keys/<api_key>/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
     def delete(self, request, api_key):
         """Deactivate API key."""
@@ -438,7 +437,7 @@ class ClientConfigurationView(APIView):
     GET /api/v1/clients/configuration/
     PUT /api/v1/clients/configuration/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
     def get(self, request):
         """Get client configuration."""
@@ -509,7 +508,7 @@ class ClientStatsView(APIView):
 
     GET /api/v1/clients/stats/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
     def get(self, request):
         """Get client statistics."""
@@ -627,7 +626,7 @@ class IPWhitelistView(APIView):
     GET /api/v1/clients/ip-whitelist/
     PUT /api/v1/clients/ip-whitelist/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
     def get(self, request):
         """Get current IP whitelist."""
@@ -700,7 +699,7 @@ class WebhookTestView(APIView):
 
     POST /api/v1/clients/test-webhook/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsValidClient]
 
     def post(self, request):
         """Test webhook endpoint."""
@@ -804,7 +803,7 @@ class WebhookTestView(APIView):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsValidClient])
 def client_transactions(request):
     """
     Get client transactions.

@@ -12,6 +12,7 @@ urlpatterns = [
     path('initiate/', views.STKPushInitiateView.as_view(), name='stk-push-initiate'),
     path('callback/', views.MPesaCallbackView.as_view(), name='mpesa-callback'),
     path('status/<uuid:transaction_id>/', views.PaymentStatusView.as_view(), name='payment-status'),
+    path('force-status-check/', views.ForceStatusCheckView.as_view(), name='force-status-check'),
 
     # Manual validation endpoints
     path('validate/', views.ManualValidationView.as_view(), name='manual-validation'),

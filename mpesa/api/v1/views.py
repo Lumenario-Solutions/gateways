@@ -9,7 +9,6 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.request import Request
-from rest_framework.permissions import IsAuthenticated
 from clients.permissions.api_client_permissions import IsValidClient, ClientOwnerPermission
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
@@ -272,27 +271,115 @@ class PaymentStatusView(APIView):
                     'timestamp': timezone.now()
                 }, status=status.HTTP_401_UNAUTHORIZED)
 
-            # Get transaction (ensures client can only access their own transactions)
-            transaction = get_object_or_404(
-                Transaction,
-                transaction_id=transaction_id,
-                client=client
-            )
+            # Initialize STK Push service with client for status checking
+            stk_service = STKPushService(client=client)
 
-            # Serialize transaction data
-            serializer = PaymentStatusSerializer(transaction)
+            # Use the improved status checking method
+            transaction_status = stk_service.query_stk_status(transaction_id=transaction_id)
 
             return Response({
                 'success': True,
-                'data': serializer.data,
+                'data': transaction_status,
                 'timestamp': timezone.now()
             }, status=status.HTTP_200_OK)
+
+        except ValidationException as e:
+            logger.warning(f"Validation error in payment status: {e}")
+            return Response({
+                'error': 'Validation error',
+                'message': str(e),
+                'timestamp': timezone.now()
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        except MPesaException as e:
+            logger.error(f"MPesa error in payment status: {e}")
+            return Response({
+                'error': 'Status check failed',
+                'message': str(e),
+                'timestamp': timezone.now()
+            }, status=status.HTTP_502_BAD_GATEWAY)
 
         except Exception as e:
             logger.error(f"Error getting payment status: {e}")
             return Response({
                 'error': 'Status check failed',
                 'message': 'Failed to retrieve payment status',
+                'timestamp': timezone.now()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ForceStatusCheckView(APIView):
+    """
+    Force an active status check for a transaction by querying M-Pesa API directly.
+
+    POST /api/v1/mpesa/force-status-check/
+    """
+    permission_classes = [IsValidClient]
+
+    def post(self, request: Request) -> Response:
+        """
+        Force check transaction status by querying M-Pesa API.
+
+        Args:
+            request: The HTTP request containing transaction_id
+
+        Returns:
+            Response: JSON response with updated transaction status
+        """
+        try:
+            # Validate request data
+            transaction_id = request.data.get('transaction_id')
+            if not transaction_id:
+                return Response({
+                    'error': 'Validation failed',
+                    'message': 'transaction_id is required',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Explicit client validation and type checking
+            client = request.user
+            if not isinstance(client, Client):
+                logger.error(f"Invalid user type in force status check: {type(client)}")
+                return Response({
+                    'error': 'Authentication error',
+                    'message': 'Invalid client authentication',
+                    'timestamp': timezone.now()
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
+            # Initialize STK Push service with client
+            stk_service = STKPushService(client=client)
+
+            # Force check transaction status
+            transaction_status = stk_service.check_transaction_status_actively(transaction_id)
+
+            return Response({
+                'success': True,
+                'message': 'Transaction status checked successfully',
+                'data': transaction_status,
+                'timestamp': timezone.now()
+            }, status=status.HTTP_200_OK)
+
+        except ValidationException as e:
+            logger.warning(f"Validation error in force status check: {e}")
+            return Response({
+                'error': 'Validation error',
+                'message': str(e),
+                'timestamp': timezone.now()
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        except MPesaException as e:
+            logger.error(f"MPesa error in force status check: {e}")
+            return Response({
+                'error': 'Status check failed',
+                'message': str(e),
+                'timestamp': timezone.now()
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        except Exception as e:
+            logger.error(f"Error in force status check: {e}")
+            return Response({
+                'error': 'Status check failed',
+                'message': 'Failed to check transaction status',
                 'timestamp': timezone.now()
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

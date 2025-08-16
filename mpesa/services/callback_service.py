@@ -46,9 +46,14 @@ class CallbackService:
                 headers=headers or {}
             )
 
+            logger.info(f"Received STK callback from IP: {ip_address}")
+            logger.info(f"Callback data: {request_data}")
+
             # Validate callback structure
             if not self._validate_stk_callback(request_data):
                 error_msg = "Invalid STK callback structure"
+                logger.error(f"Callback validation failed: {error_msg}")
+                logger.error(f"Raw callback data: {request_data}")
                 self._mark_callback_failed(callback_log, error_msg)
                 return {'status': 'error', 'message': error_msg}
 
@@ -58,18 +63,24 @@ class CallbackService:
 
             if not checkout_request_id:
                 error_msg = "Missing CheckoutRequestID in callback"
+                logger.error(f"Callback missing checkout request ID: {stk_callback}")
                 self._mark_callback_failed(callback_log, error_msg)
                 return {'status': 'error', 'message': error_msg}
+
+            logger.info(f"Processing callback for CheckoutRequestID: {checkout_request_id}")
 
             # Find transaction
             transaction = Transaction.objects.get_transaction_by_checkout_request_id(checkout_request_id)
 
             if not transaction:
                 error_msg = f"Transaction not found for CheckoutRequestID: {checkout_request_id}"
-                self._mark_callback_failed(callback_log, error_msg)
                 logger.warning(error_msg)
+                logger.warning(f"Available transactions: {Transaction.objects.filter(checkout_request_id__isnull=False).values_list('checkout_request_id', flat=True)[:10]}")
+                self._mark_callback_failed(callback_log, error_msg)
                 # Return success to avoid MPesa retries for unknown transactions
                 return {'status': 'success', 'message': 'Transaction not found but acknowledged'}
+
+            logger.info(f"Found transaction: {transaction.transaction_id} for client: {transaction.client.name}")
 
             # Link callback to transaction
             callback_log.transaction = transaction
@@ -94,14 +105,15 @@ class CallbackService:
 
         except Transaction.DoesNotExist:
             error_msg = f"Transaction not found for checkout request ID: {checkout_request_id}"
-            self._mark_callback_failed(callback_log, error_msg)
             logger.warning(error_msg)
+            self._mark_callback_failed(callback_log, error_msg)
             return {'status': 'success', 'message': 'Transaction not found but acknowledged'}
 
         except Exception as e:
             error_msg = f"Error processing STK callback: {e}"
-            self._mark_callback_failed(callback_log, error_msg)
             logger.error(error_msg)
+            logger.exception("Full callback processing error traceback:")
+            self._mark_callback_failed(callback_log, error_msg)
             return {'status': 'error', 'message': 'Callback processing failed'}
 
     def process_c2b_validation(self, request_data, ip_address=None, user_agent=None, headers=None):
