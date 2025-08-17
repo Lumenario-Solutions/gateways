@@ -21,7 +21,7 @@ class CallbackService:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
 
-    def process_stk_callback(self, request_data, ip_address=None, user_agent=None, headers=None):
+    def process_stk_callback(self, request_data, ip_address=None, user_agent=None, headers=None, callback_log=None):
         """
         Process STK Push callback from MPesa.
 
@@ -30,21 +30,21 @@ class CallbackService:
             ip_address (str): Source IP address
             user_agent (str): User agent
             headers (dict): HTTP headers
+            callback_log (CallbackLog): Existing callback log to use (optional)
 
         Returns:
             dict: Processing result
         """
-        callback_log = None
-
         try:
-            # Log the callback
-            callback_log = self._log_callback(
-                callback_type='STK_PUSH',
-                raw_data=request_data,
-                ip_address=ip_address,
-                user_agent=user_agent,
-                headers=headers or {}
-            )
+            # Use existing callback log or create new one
+            if callback_log is None:
+                callback_log = self._log_callback(
+                    callback_type='STK_PUSH',
+                    raw_data=request_data,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    headers=headers or {}
+                )
 
             logger.info(f"Received STK callback from IP: {ip_address}")
             logger.info(f"Callback data: {request_data}")

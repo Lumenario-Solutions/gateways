@@ -173,17 +173,64 @@ class MPesaCallbackView(APIView):
     def post(self, request):
         """Process MPesa callback."""
         try:
+            # Convert request.data to JSON-serializable format
+            import json
+
+            # More robust data conversion
+            try:
+                # Use request body for raw JSON data
+                if hasattr(request, 'body') and request.body:
+                    raw_data = json.loads(request.body.decode('utf-8'))
+                else:
+                    # Fallback to request.data conversion
+                    raw_data = dict(request.data) if hasattr(request.data, 'items') else request.data
+            except (TypeError, ValueError, json.JSONDecodeError):
+                # If JSON parsing fails, try manual conversion
+                try:
+                    if hasattr(request.data, 'dict') and callable(getattr(request.data, 'dict')):
+                        raw_data = request.data.dict()
+                    elif hasattr(request.data, 'items'):
+                        raw_data = dict(request.data.items())
+                    elif isinstance(request.data, dict):
+                        raw_data = request.data
+                    else:
+                        # Create a safe representation
+                        raw_data = {
+                            'Body': str(request.data),
+                            '_type': str(type(request.data))
+                        }
+                        logger.warning(f"Using string representation for callback data: {type(request.data)}")
+                except Exception as conv_error:
+                    logger.error(f"All conversion methods failed: {conv_error}")
+                    logger.error(f"Request.data type: {type(request.data)}")
+                    # Create minimal safe fallback
+                    raw_data = {
+                        'Body': {'stkCallback': {'CheckoutRequestID': 'unknown', 'ResultCode': '1', 'ResultDesc': 'Data conversion failed'}},
+                        '_error': 'Could not parse callback data',
+                        '_original_type': str(type(request.data))
+                    }
+
+            logger.info(f"Processing MPesa callback with data type: {type(raw_data)}")
+
+            # Convert headers to JSON-serializable format
+            try:
+                # Only include string-valued headers
+                safe_headers = {k: str(v) for k, v in request.META.items() if isinstance(v, (str, int, float, bool))}
+            except Exception as header_error:
+                logger.warning(f"Error converting headers: {header_error}")
+                safe_headers = {'error': 'Could not serialize headers'}
+
             # Log the callback
             callback_log = CallbackLog.objects.create(
                 callback_type='STK_PUSH',
                 ip_address=self._get_client_ip(request),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),
-                headers=dict(request.META),
-                raw_data=request.data
+                headers=safe_headers,
+                raw_data=raw_data
             )
 
             # Validate callback data
-            serializer = MPesaCallbackSerializer(data=request.data)
+            serializer = MPesaCallbackSerializer(data=raw_data)
             if not serializer.is_valid():
                 callback_log.mark_as_processed(
                     success=False,
@@ -197,10 +244,11 @@ class MPesaCallbackView(APIView):
             # Process callback
             callback_service = CallbackService()
             result = callback_service.process_stk_callback(
-                request_data=request.data,
+                request_data=raw_data,
                 ip_address=self._get_client_ip(request),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),
-                headers=dict(request.META)
+                headers=safe_headers,
+                callback_log=callback_log
             )
 
             callback_log.mark_as_processed(success=True)
@@ -213,12 +261,25 @@ class MPesaCallbackView(APIView):
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
+            import traceback
             logger.error(f"Error processing MPesa callback: {e}")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+
+            # Try to identify if it's a JSON serialization error
+            if "JSON serializable" in str(e):
+                logger.error("This is a JSON serialization error!")
+                logger.error(f"Request data type: {type(request.data)}")
+                logger.error(f"Request data: {request.data}")
+
             if 'callback_log' in locals():
-                callback_log.mark_as_processed(
-                    success=False,
-                    error_message=str(e)
-                )
+                try:
+                    callback_log.mark_as_processed(
+                        success=False,
+                        error_message=str(e)
+                    )
+                except Exception as save_error:
+                    logger.error(f"Failed to save callback log: {save_error}")
 
             return Response({
                 'ResultCode': 1,

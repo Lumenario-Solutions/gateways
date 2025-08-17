@@ -299,9 +299,9 @@ class STKPushService:
             transaction.response_description = result_desc
 
             # Update status based on result code
-            if result_code == '0':
+            if str(result_code) == '0':
                 transaction.status = 'SUCCESSFUL'
-            elif result_code in ['1032', '1']:
+            elif str(result_code) in ['1032', '1']:
                 transaction.status = 'CANCELLED'
             else:
                 transaction.status = 'FAILED'

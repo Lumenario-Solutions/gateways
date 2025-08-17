@@ -4,6 +4,7 @@ MPesa payment models for transaction tracking and credential management.
 
 from django.db import models
 from django.utils import timezone
+from datetime import datetime  # Add this import
 from clients.models import Client
 from core.utils.encryption import encryption_manager
 from core.utils.phone import normalize_phone_number, PhoneNumberError
@@ -353,7 +354,7 @@ class Transaction(models.Model):
                 self.response_description = stk_callback.get('ResultDesc', '')
 
                 # Process based on result code
-                if self.response_code == '0':
+                if str(self.response_code) == '0':
                     self.status = 'SUCCESSFUL'
 
                     # Extract callback items if successful
@@ -369,16 +370,21 @@ class Transaction(models.Model):
                                 elif name == 'TransactionDate':
                                     # Convert MPesa date format to datetime
                                     try:
-                                        self.transaction_date = timezone.datetime.strptime(
+                                        self.transaction_date = datetime.strptime(
                                             str(value), '%Y%m%d%H%M%S'
-                                        ).replace(tzinfo=timezone.utc)
+                                        )
                                     except ValueError:
                                         logger.warning(f"Invalid transaction date format: {value}")
                 else:
                     self.status = 'FAILED'
 
-            self.save()
-            logger.info(f"Processed callback for transaction {self.transaction_id}")
+            # Save with explicit field updates for better performance and reliability
+            self.save(update_fields=[
+                'callback_received', 'callback_data', 'merchant_request_id',
+                'checkout_request_id', 'response_code', 'response_description',
+                'status', 'mpesa_receipt_number', 'transaction_date', 'updated_at'
+            ])
+            logger.info(f"Processed callback for transaction {self.transaction_id} - Status: {self.status}")
 
         except Exception as e:
             logger.error(f"Failed to process callback for transaction {self.transaction_id}: {e}")
