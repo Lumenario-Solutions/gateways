@@ -49,17 +49,30 @@ def get_client_env_variable(client, variable_type, default_value=None):
     return default_value
 
 
-def create_email_template(notification_type, data):
+def create_email_template(notification_type, data, client=None):
     """
     Create email template for notification.
 
     Args:
         notification_type: Type of notification
         data: Data for template
+        client: Client instance to check for custom templates
 
     Returns:
         tuple: (subject, html_content)
     """
+    # Check if client has a custom email template
+    if client:
+        try:
+            from core.models import ClientTemplate
+            custom_template = ClientTemplate.objects.get_template(client, 'EMAIL')
+            if custom_template:
+                # Use custom template
+                rendered_content = custom_template.render_template(data)
+                subject = f"Payment Gateway - {data.get('title', 'Notification')}"
+                return subject, rendered_content
+        except Exception as e:
+            logger.warning(f"Failed to use custom email template for {client.name}: {e}")
     base_template = """
     <!DOCTYPE html>
     <html>
@@ -183,17 +196,28 @@ def create_email_template(notification_type, data):
     return subject, html_content
 
 
-def create_whatsapp_message(notification_type, data):
+def create_whatsapp_message(notification_type, data, client=None):
     """
     Create WhatsApp message for notification.
 
     Args:
         notification_type: Type of notification
         data: Data for message
+        client: Client instance to check for custom templates
 
     Returns:
         str: Formatted WhatsApp message
     """
+    # Check if client has a custom WhatsApp template
+    if client:
+        try:
+            from core.models import ClientTemplate
+            custom_template = ClientTemplate.objects.get_template(client, 'WHATSAPP')
+            if custom_template:
+                # Use custom template
+                return custom_template.render_template(data)
+        except Exception as e:
+            logger.warning(f"Failed to use custom WhatsApp template for {client.name}: {e}")
     timestamp = timezone.now().strftime('%Y-%m-%d %H:%M:%S UTC')
     client_hashtag = data.get('client_hashtag', '')
 
@@ -292,7 +316,7 @@ def send_notification(client, notification_type, title, message,
                 api_key = get_client_env_variable(client, 'RESEND_API_KEY')
 
                 if api_key:
-                    subject, html_content = create_email_template(notification_type, template_data)
+                    subject, html_content = create_email_template(notification_type, template_data, client)
 
                     # Use client-specific email function
                     email_result = send_email(
@@ -331,7 +355,7 @@ def send_notification(client, notification_type, title, message,
                 api_key = get_client_env_variable(client, 'MESSAGE_API_KEY')
 
                 if api_url and api_key:
-                    whatsapp_message = create_whatsapp_message(notification_type, template_data)
+                    whatsapp_message = create_whatsapp_message(notification_type, template_data, client)
 
                     # Use client-specific message function
                     whatsapp_result = send_message(

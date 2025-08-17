@@ -11,6 +11,7 @@ router = DefaultRouter()
 router.register(r'activity-logs', views.ActivityLogViewSet, basename='activitylog')
 router.register(r'notifications', views.NotificationViewSet, basename='notification')
 router.register(r'environment-variables', views.ClientEnvironmentVariableViewSet, basename='clientenvironmentvariable')
+router.register(r'templates', views.ClientTemplateViewSet, basename='clienttemplate')
 
 app_name = 'core'
 

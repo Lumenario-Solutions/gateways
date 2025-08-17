@@ -374,17 +374,8 @@ class CallbackService:
             if transaction.client and transaction.client.webhook_url:
                 self._send_webhook_notification(transaction)
 
-            # Send email and WhatsApp notifications based on transaction status
-            if transaction.client:
-                try:
-                    if transaction.is_successful():
-                        from core.utils.notification_service import notify_payment_received
-                        notify_payment_received(transaction.client, transaction)
-                    elif transaction.is_failed():
-                        from core.utils.notification_service import notify_payment_failed
-                        notify_payment_failed(transaction.client, transaction)
-                except Exception as e:
-                    logger.warning(f"Failed to send email/WhatsApp notifications: {e}")
+            # Note: Email and WhatsApp notifications are now handled by Django signals
+            # in core/signals.py when transaction status changes. This prevents duplicate notifications.
 
         except Exception as e:
             logger.error(f"Error sending notifications for {transaction.transaction_id}: {e}")

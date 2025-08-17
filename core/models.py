@@ -679,3 +679,228 @@ class Notification(models.Model):
     def get_client_hashtag(self):
         """Generate client hashtag for messages."""
         return f"#{self.client.name.replace(' ', '').lower()}"
+
+
+class ClientTemplateManager(models.Manager):
+    """Custom manager for ClientTemplate model."""
+
+    def get_template(self, client, template_type):
+        """Get active template for client and type."""
+        try:
+            return self.get(client=client, template_type=template_type, is_active=True)
+        except self.model.DoesNotExist:
+            return None
+
+    def set_template(self, client, template_type, html_content, **kwargs):
+        """Set or update template for client."""
+        try:
+            # Deactivate existing templates of the same type for this client
+            self.filter(
+                client=client,
+                template_type=template_type,
+                is_active=True
+            ).update(is_active=False)
+
+            # Create new template
+            template = self.create(
+                client=client,
+                template_type=template_type,
+                html_content=html_content,
+                is_active=True,
+                **kwargs
+            )
+            logger.info(f"Template set for client {client.name}: {template_type}")
+            return template
+        except Exception as e:
+            logger.error(f"Error setting template: {e}")
+            raise
+
+
+class ClientTemplate(models.Model):
+    """
+    Stores custom HTML/CSS templates for client notifications.
+    Allows clients to customize email and WhatsApp message templates.
+    """
+
+    TEMPLATE_TYPES = [
+        ('EMAIL', 'Email Template'),
+        ('WHATSAPP', 'WhatsApp Template'),
+    ]
+
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+    client = models.ForeignKey(
+        'clients.Client',
+        on_delete=models.CASCADE,
+        related_name='custom_templates',
+        help_text="Client who owns this template"
+    )
+    template_type = models.CharField(
+        max_length=20,
+        choices=TEMPLATE_TYPES,
+        help_text="Type of template (EMAIL or WHATSAPP)"
+    )
+    name = models.CharField(
+        max_length=255,
+        help_text="Template name/description"
+    )
+    html_content = models.TextField(
+        help_text="HTML/CSS template content with parameter placeholders"
+    )
+
+    # Template metadata
+    description = models.TextField(
+        blank=True,
+        help_text="Description of the template usage"
+    )
+    parameters = models.JSONField(
+        default=list,
+        help_text="List of available parameters for this template"
+    )
+
+    # Status
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this template is active and should be used"
+    )
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_used = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this template was last used"
+    )
+
+    objects = ClientTemplateManager()
+
+    class Meta:
+        db_table = 'client_templates'
+        verbose_name = 'Client Template'
+        verbose_name_plural = 'Client Templates'
+        unique_together = ['client', 'template_type', 'is_active']
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['client', 'template_type', 'is_active']),
+            models.Index(fields=['template_type', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f"{self.client.name} - {self.get_template_type_display()}: {self.name}"
+
+    def save(self, *args, **kwargs):
+        """Override save to enforce uniqueness of active templates."""
+        if self.is_active:
+            # Deactivate other active templates of the same type for this client
+            ClientTemplate.objects.filter(
+                client=self.client,
+                template_type=self.template_type,
+                is_active=True
+            ).exclude(id=self.id).update(is_active=False)
+
+        super().save(*args, **kwargs)
+
+    def mark_as_used(self):
+        """Mark template as recently used."""
+        self.last_used = timezone.now()
+        self.save(update_fields=['last_used'])
+
+    def get_available_parameters(self):
+        """Get list of available parameters for this template type."""
+        base_params = [
+            'title', 'message', 'client_name', 'timestamp', 'client_hashtag'
+        ]
+
+        if self.template_type == 'EMAIL':
+            return base_params + [
+                'amount', 'phone_number', 'transaction_id', 'receipt_number',
+                'transaction_type', 'status', 'error_reason', 'highlight_info'
+            ]
+        elif self.template_type == 'WHATSAPP':
+            return base_params + [
+                'amount', 'phone_number', 'transaction_id', 'receipt_number',
+                'transaction_type', 'status', 'error_reason'
+            ]
+
+        return base_params
+
+    def render_template(self, context_data):
+        """
+        Render template with provided context data.
+
+        Args:
+            context_data (dict): Data to replace template variables
+
+        Returns:
+            str: Rendered template content
+        """
+        try:
+            from django.template import Template, Context
+
+            # Ensure all required parameters are available
+            available_params = self.get_available_parameters()
+            safe_context = {}
+
+            for param in available_params:
+                safe_context[param] = context_data.get(param, '')
+
+            # Add some default values
+            safe_context.setdefault('timestamp', timezone.now().strftime('%Y-%m-%d %H:%M:%S UTC'))
+            safe_context.setdefault('client_name', self.client.name)
+
+            template = Template(self.html_content)
+            rendered_content = template.render(Context(safe_context))
+
+            # Mark template as used
+            self.mark_as_used()
+
+            return rendered_content
+
+        except Exception as e:
+            logger.error(f"Error rendering template {self.id}: {e}")
+            raise
+
+    def validate_template(self):
+        """
+        Validate template syntax and required parameters.
+
+        Returns:
+            dict: Validation result with success boolean and errors list
+        """
+        try:
+            from django.template import Template, TemplateSyntaxError
+
+            # Try to parse template
+            try:
+                Template(self.html_content)
+            except TemplateSyntaxError as e:
+                return {
+                    'success': False,
+                    'errors': [f"Template syntax error: {str(e)}"]
+                }
+
+            # Check for required parameters based on template type
+            required_params = ['title', 'message']
+            missing_params = []
+
+            for param in required_params:
+                if f'{{{{{param}}}}}' not in self.html_content and f'{{{{ {param} }}}}' not in self.html_content:
+                    missing_params.append(param)
+
+            if missing_params:
+                return {
+                    'success': False,
+                    'errors': [f"Missing required parameters: {', '.join(missing_params)}"]
+                }
+
+            return {'success': True, 'errors': []}
+
+        except Exception as e:
+            return {
+                'success': False,
+                'errors': [f"Validation error: {str(e)}"]
+            }

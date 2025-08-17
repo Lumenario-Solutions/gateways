@@ -1,4 +1,3 @@
-
 import time
 import logging
 import uuid
@@ -29,7 +28,7 @@ from rest_framework.views import APIView
 
 from clients.models import Client
 from clients.permissions.api_client_permissions import IsValidClient
-from core.models import ClientEnvironmentVariable, Notification
+from core.models import ClientEnvironmentVariable, Notification, ClientTemplate
 from core.utils.notification_service import send_notification, notify_credentials_updated
 
 from .models import ActivityLog
@@ -38,7 +37,9 @@ from .serializers import (
     ActivityLogListSerializer,
     ActivityLogStatsSerializer,
     NotificationSerializer,
-    ClientEnvironmentVariableSerializer
+    ClientEnvironmentVariableSerializer,
+    ClientTemplateSerializer,
+    ClientTemplateListSerializer
 )
 
 
@@ -387,6 +388,226 @@ class ClientEnvironmentVariableViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(client=user.client)
 
         return queryset
+
+
+class ClientTemplateViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for ClientTemplate model with full CRUD operations.
+    Allows clients to manage their custom notification templates.
+    """
+
+    queryset = ClientTemplate.objects.all()
+    permission_classes = [IsValidClient]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['template_type', 'is_active']
+    search_fields = ['name', 'description']
+    ordering_fields = ['created_at', 'updated_at', 'last_used']
+    ordering = ['-created_at']
+
+    def get_serializer_class(self):
+        """Return appropriate serializer based on action."""
+        if self.action == 'list':
+            return ClientTemplateListSerializer
+        return ClientTemplateSerializer
+
+    def get_queryset(self):
+        """Filter by client - users can only see their own templates."""
+        queryset = super().get_queryset()
+        queryset = queryset.select_related('client')
+
+        # Get client from request user or authentication
+        client = getattr(self.request.user, 'client', None)
+        if not client and hasattr(self.request, 'client'):
+            client = self.request.client
+
+        if client:
+            queryset = queryset.filter(client=client)
+        else:
+            # If no client is found, return empty queryset
+            queryset = queryset.none()
+
+        return queryset
+
+    def perform_create(self, serializer):
+        """Set client when creating template."""
+        # Get client from request user or authentication
+        client = getattr(self.request.user, 'client', None)
+        if not client and hasattr(self.request, 'client'):
+            client = self.request.client
+
+        if not client:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("No client associated with this request.")
+
+        serializer.save(client=client)
+
+    @action(detail=True, methods=['post'])
+    def validate_template(self, request, pk=None):
+        """
+        Validate template syntax and parameters.
+        """
+        template = self.get_object()
+
+        try:
+            validation_result = template.validate_template()
+            return Response(validation_result)
+        except Exception as e:
+            logger.error(f"Error validating template {pk}: {e}")
+            return Response(
+                {
+                    'success': False,
+                    'errors': [f"Validation failed: {str(e)}"]
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=['post'])
+    def test_render(self, request, pk=None):
+        """
+        Test template rendering with sample data.
+        """
+        template = self.get_object()
+
+        # Sample data for testing
+        sample_data = {
+            'title': 'Test Notification',
+            'message': 'This is a test message to preview your template.',
+            'client_name': template.client.name,
+            'timestamp': timezone.now().strftime('%Y-%m-%d %H:%M:%S UTC'),
+            'client_hashtag': f"#{template.client.name.replace(' ', '').lower()}",
+            'amount': '1000.00',
+            'phone_number': '254712345678',
+            'transaction_id': 'TEST123456',
+            'receipt_number': 'ABC123XYZ',
+            'transaction_type': 'STK_PUSH',
+            'status': 'SUCCESSFUL',
+            'error_reason': '',
+            'highlight_info': 'This is test highlight information.'
+        }
+
+        # Allow custom test data from request
+        custom_data = request.data.get('test_data', {})
+        sample_data.update(custom_data)
+
+        try:
+            rendered_content = template.render_template(sample_data)
+            return Response({
+                'success': True,
+                'rendered_content': rendered_content,
+                'test_data_used': sample_data
+            })
+        except Exception as e:
+            logger.error(f"Error rendering template {pk}: {e}")
+            return Response(
+                {
+                    'success': False,
+                    'error': f"Rendering failed: {str(e)}"
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=False, methods=['get'])
+    def parameters(self, request):
+        """
+        Get available parameters for different template types.
+        """
+        email_params = ClientTemplate(template_type='EMAIL').get_available_parameters()
+        whatsapp_params = ClientTemplate(template_type='WHATSAPP').get_available_parameters()
+
+        return Response({
+            'EMAIL': {
+                'parameters': email_params,
+                'description': 'Parameters available for email templates',
+                'required': ['title', 'message'],
+                'example_usage': {
+                    'title': '{{title}}',
+                    'message': '{{message}}',
+                    'amount': '{{amount}}',
+                    'client_name': '{{client_name}}'
+                }
+            },
+            'WHATSAPP': {
+                'parameters': whatsapp_params,
+                'description': 'Parameters available for WhatsApp templates',
+                'required': ['title', 'message'],
+                'example_usage': {
+                    'title': '{{title}}',
+                    'message': '{{message}}',
+                    'amount': '{{amount}}',
+                    'client_name': '{{client_name}}'
+                }
+            }
+        })
+
+    @action(detail=False, methods=['get'])
+    def examples(self, request):
+        """
+        Get example templates for different types.
+        """
+        email_example = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{{title}}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #4CAF50; color: white; padding: 20px; text-align: center; }
+        .content { background-color: #f9f9f9; padding: 20px; }
+        .footer { background-color: #333; color: white; padding: 10px; text-align: center; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{title}}</h1>
+        </div>
+        <div class="content">
+            <p>{{message}}</p>
+            {% if amount %}
+            <p><strong>Amount:</strong> KES {{amount}}</p>
+            {% endif %}
+            {% if phone_number %}
+            <p><strong>Phone:</strong> {{phone_number}}</p>
+            {% endif %}
+            {% if transaction_id %}
+            <p><strong>Transaction ID:</strong> {{transaction_id}}</p>
+            {% endif %}
+        </div>
+        <div class="footer">
+            <p>{{client_name}} | {{timestamp}}</p>
+        </div>
+    </div>
+</body>
+</html>
+        """.strip()
+
+        whatsapp_example = """
+🔔 *{{title}}*
+
+{{message}}
+
+{% if amount %}💰 *Amount:* KES {{amount}}{% endif %}
+{% if phone_number %}📱 *Phone:* {{phone_number}}{% endif %}
+{% if transaction_id %}🆔 *Transaction ID:* {{transaction_id}}{% endif %}
+
+⏰ {{timestamp}}
+📞 {{client_name}}
+        """.strip()
+
+        return Response({
+            'EMAIL': {
+                'name': 'Default Email Template',
+                'description': 'A professional email template with styling',
+                'html_content': email_example
+            },
+            'WHATSAPP': {
+                'name': 'Default WhatsApp Template',
+                'description': 'A clean WhatsApp message template with emojis',
+                'html_content': whatsapp_example
+            }
+        })
 
 
 @api_view(['GET'])
